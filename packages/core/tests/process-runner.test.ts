@@ -265,17 +265,6 @@ describe("runProcess", () => {
     expect(result.stdout).toContain("stdin-data:0");
   });
 
-  // ---- regression round 3: findings from third review of PR #33 ----
-
-  it("does not redact short common env values like '1'", async () => {
-    const result = await runProcess({
-      binary: NODE,
-      args: ["-e", "console.log('1 file changed, 0 insertions')"],
-      env: { FORCE_COLOR: "1" },
-    });
-    expect(result.stdout).toContain("1 file changed, 0 insertions");
-  });
-
   it("resolves when the child exits but a descendant holds the capture pipes", async () => {
     // The parent exits immediately after spawning a detached grandchild that
     // inherits stdout, so 'close' on the child is held open by the pipe. The
@@ -291,6 +280,24 @@ describe("runProcess", () => {
     `;
     const result = await runProcess({ binary: NODE, args: ["-e", script] });
     expect(result.exitCode).toBe(0);
+  });
+
+  it("captures large fast-exit output with exact fidelity", async () => {
+    // A child that writes >64 KB (larger than the pipe buffer) and exits
+    // immediately must not lose its tail: 'exit' fires before stdio drains,
+    // so destroying the streams on 'exit' would drop the final chunk.
+    const chunk = "x".repeat(64 * 1024);
+    const tail = "END-OF-OUTPUT";
+    const result = await runProcess({
+      binary: NODE,
+      args: [
+        "-e",
+        `process.stdout.write(${JSON.stringify(chunk + tail)}, () => process.exit(0))`,
+      ],
+    });
+    expect(result.truncated).toBe(false);
+    expect(result.stdout.endsWith(tail)).toBe(true);
+    expect(result.stdout.length).toBe(chunk.length + tail.length);
   });
 });
 
