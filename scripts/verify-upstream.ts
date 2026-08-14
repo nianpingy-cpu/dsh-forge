@@ -7,6 +7,8 @@
  * any integration code is touched.
  */
 
+import { readFileSync } from "node:fs";
+
 export interface CompatibilityManifest {
   repository: string;
   commit: string;
@@ -78,6 +80,34 @@ export function validateManifest(input: unknown): ValidationResult {
   }
 
   return errors.length === 0 ? { valid: true } : { valid: false, errors };
+}
+
+/**
+ * Read a manifest from disk and validate it. A missing file or malformed JSON
+ * is returned as a graceful ValidationResult (never a thrown ENOENT), so the
+ * "missing manifest fails" TDD case is exercised as a real failure path.
+ */
+export function readManifest(manifestPath: string): ValidationResult {
+  let raw: string;
+  try {
+    raw = readFileSync(manifestPath, "utf8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      valid: false,
+      errors: [`manifest not found at ${manifestPath} (${code ?? "read error"})`],
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return {
+      valid: false,
+      errors: [`manifest is not valid JSON: ${String(err)}`],
+    };
+  }
+  return validateManifest(parsed);
 }
 
 export function formatResult(

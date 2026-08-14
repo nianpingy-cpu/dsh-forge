@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateManifest } from "../scripts/verify-upstream";
+import { readManifest, validateManifest } from "../scripts/verify-upstream.js";
 
 const validManifest = {
   repository: "deepseek-ai/deepseek-harness",
@@ -80,12 +81,20 @@ describe("validateManifest", () => {
     if (!result.valid) expect(result.errors.join("\n")).toMatch(/notes/);
   });
 
+  it("rejects a missing manifest file gracefully", () => {
+    // The required TDD case: a deleted manifest must be a graceful
+    // ValidationResult, not a raw ENOENT thrown to the caller.
+    const missing = join(tmpdir(), "no-such-deepseek-manifest.json");
+    const result = readManifest(missing);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.errors.join("\n")).toMatch(/not found/i);
+  });
+
   it("accepts the real repository manifest", () => {
     const manifestPath = fileURLToPath(
       new URL("../compatibility/deepseek-harness.json", import.meta.url),
     );
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-    const result = validateManifest(manifest);
+    const result = readManifest(manifestPath);
     expect(result.valid).toBe(true);
   });
 });
