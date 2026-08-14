@@ -1,0 +1,8 @@
+[project]
+name = "dsh-uv-conflict"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = [
+  "typing-extensions==3.0",
+  "typing-extensions==4.0",
+]
