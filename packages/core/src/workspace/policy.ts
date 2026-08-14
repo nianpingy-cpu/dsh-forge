@@ -41,9 +41,14 @@ export class DestructiveOperationError extends Error {
  */
 export function resolveInWorkspace(root: string, target: string): string {
   const workspaceRoot = realpathSync(root);
-  const candidate = isAbsolute(target)
-    ? resolve(target)
-    : resolve(workspaceRoot, target);
+  // Backslash separators are a Windows path convention; normalize them only
+  // there. On POSIX a backslash is a legitimate filename character and must
+  // not be rewritten.
+  const normalizedTarget =
+    process.platform === "win32" ? target.replace(/\\/g, "/") : target;
+  const candidate = isAbsolute(normalizedTarget)
+    ? resolve(normalizedTarget)
+    : resolve(workspaceRoot, normalizedTarget);
 
   // Fully canonicalize the deepest existing ancestor, then re-append any
   // non-existent tail. Both sides are canonical and compared with their
@@ -86,9 +91,12 @@ function canonicalize(path: string): string {
         // Access denied, symlink loop, or any non-"missing" failure.
         throw error;
       }
-      if (current !== original && isDanglingSymlink(current)) {
-        // A real directory entry that cannot be followed — not a plain
-        // "does not exist". Reject rather than misjudge on an ancestor.
+      // A real directory entry that cannot be followed (this includes the
+      // leaf itself: a target that IS a dangling symlink) is not a plain
+      // "does not exist". Reject rather than walk up and resurrect the
+      // symlink path as "canonical", which a later write would follow
+      // outside the workspace.
+      if (isDanglingSymlink(current)) {
         throw error;
       }
       const parent = resolve(current, "..");
