@@ -86,7 +86,13 @@ function coerceString(value: unknown): string | undefined {
 }
 
 /** Normalize one raw finding; unknown fields are dropped, never crash. */
-export function toDiagnostic(tool: string, raw: RawDiagnostic): Diagnostic {
+export function toDiagnostic(tool: string, raw: RawDiagnostic | null | undefined): Diagnostic {
+  // Malformed-but-parseable CLI output (e.g. a null element inside a results
+  // array, or a primitive top-level value) must never throw: produce a
+  // placeholder diagnostic instead.
+  if (raw === null || raw === undefined || typeof raw !== "object" || Array.isArray(raw)) {
+    return { tool, severity: "error", message: "(malformed diagnostic input)" };
+  }
   const diagnostic: Diagnostic = {
     tool,
     severity: normalizeSeverity(raw.severity),
