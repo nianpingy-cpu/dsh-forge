@@ -1,0 +1,23 @@
+{
+  "ArtifactName": "demo",
+  "ArtifactType": "container_image",
+  "Metadata": {},
+  "Results": [
+    {
+      "Target": "ubuntu:latest",
+      "Class": "lang-pkgs",
+      "Type": "ubuntu",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2024-1234",
+          "PkgName": "bash",
+          "InstalledVersion": "5.2-2",
+          "FixedVersion": "5.2-3",
+          "Title": "bash: arbitrary code execution",
+          "Severity": "HIGH",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2024-1234"
+        }
+      ]
+    }
+  ]
+}

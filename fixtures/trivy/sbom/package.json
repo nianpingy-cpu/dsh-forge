@@ -1,0 +1,8 @@
+{
+  "name": "dsh-trivy-sbom-demo",
+  "version": "1.0.0",
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "express": "^4.19.2"
+  }
+}
