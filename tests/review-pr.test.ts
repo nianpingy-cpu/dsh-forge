@@ -89,6 +89,23 @@ describe("validateReviewResponse", () => {
     const result = validateReviewResponse(wrapped);
     expect(result.ok).toBe(true);
   });
+
+  it("preserves nested finding objects as readable strings (regression)", () => {
+    const nested = {
+      ...validResponse,
+      verdict: "request_changes" as const,
+      blocking: [{ issue: "path traversal in rewrite tool", file: "src/x.ts" }],
+      non_blocking: [{ suggestion: "rename variable" }],
+    };
+    const result = validateReviewResponse(JSON.stringify(nested));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.blocking[0]).toContain("path traversal in rewrite tool");
+      expect(result.value.blocking[0]).toContain("src/x.ts");
+      expect(result.value.blocking[0]).not.toBe("[object Object]");
+      expect(result.value.non_blocking[0]).toContain("rename variable");
+    }
+  });
 });
 
 describe("callReviewer (mocked API)", () => {
