@@ -115,6 +115,21 @@ async function runSg(
   if (execution.error?.code === "BinaryNotFound") {
     return { ok: false, result: binaryNotFound(binary) };
   }
+  if (execution.timedOut || execution.aborted) {
+    // A killed/aborted run must surface as the normalized Timeout error, never
+    // as a successful scan from partial output.
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        summary: "ast-grep timed out",
+        error: {
+          code: "Timeout",
+          message: `ast-grep exceeded the ${execution.durationMs}ms execution timeout`,
+        },
+      },
+    };
+  }
   if (execution.error) {
     return { ok: false, result: toolFailure(execution.error.message) };
   }
@@ -212,7 +227,7 @@ const astSearch: ToolDefinition = {
       ok: true,
       summary: `${matches.length} match${matches.length === 1 ? "" : "es"} for pattern in ${paths.length} path(s)`,
       diagnostics,
-      resultSummary: summarizeDiagnostics("ast-grep", diagnostics, { topN: 5 }),
+      summaryBlock: summarizeDiagnostics("ast-grep", diagnostics, { topN: 5 }),
       raw: run.stdout.length > 20_000 ? run.stdout.slice(0, 20_000) + "\n...[truncated]" : run.stdout,
     };
   },
