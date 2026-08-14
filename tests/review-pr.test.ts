@@ -294,4 +294,28 @@ describe("runReview (mocked, artifact writing)", () => {
     expect(exitCode).toBe(1);
     expect(existsSync(join(artifactsDir, "reviewer-a.verification.md"))).toBe(true);
   });
+
+  it("retries transient reviewer failures before giving up", async () => {
+    // A truncated/malformed or transient API response must not immediately
+    // fail the gate; the pipeline retries with backoff.
+    let calls = 0;
+    const flakyInvoke = async () => {
+      calls += 1;
+      if (calls < 3) throw new Error(`transient failure ${calls}`);
+      return validResponse;
+    };
+    const exitCode = await runReview(makeInput(), {
+      reviewerA: {
+        provider: "openai-compatible",
+        model: "test-model",
+        apiKey: "k",
+        baseUrl: "http://mock.local/v1",
+      },
+      artifactsDir,
+      invoke: flakyInvoke as never,
+    });
+    expect(exitCode).toBe(0);
+    expect(calls).toBe(3);
+    expect(existsSync(join(artifactsDir, "reviewer-a.json"))).toBe(true);
+  });
 });
