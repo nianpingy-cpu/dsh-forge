@@ -35,13 +35,18 @@ export class DestructiveOperationError extends Error {
 
 /**
  * Resolve a target path inside the workspace root, rejecting escapes.
- * Symlinks are resolved to their real paths before the boundary check.
+ * Windows-style backslash separators are normalized so the same input
+ * resolves identically on every platform. Symlinks are resolved to their
+ * real paths before the boundary check.
  */
 export function resolveInWorkspace(root: string, target: string): string {
   const workspaceRoot = realpathSync(root);
-  const candidate = isAbsolute(target)
-    ? resolve(target)
-    : resolve(workspaceRoot, target);
+  // Normalize backslash separators: Windows accepts both, POSIX treats '\'
+  // as a literal character, which would break containment checks.
+  const normalizedTarget = target.replace(/\\/g, "/");
+  const candidate = isAbsolute(normalizedTarget)
+    ? resolve(normalizedTarget)
+    : resolve(workspaceRoot, normalizedTarget);
 
   // Resolve the deepest existing ancestor of the candidate so symlinked
   // directories are canonicalized before containment is checked.
