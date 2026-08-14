@@ -286,21 +286,19 @@ describe("runProcess", () => {
     // A child that writes >64 KB (larger than the pipe buffer) and exits
     // immediately must not lose its tail: 'exit' fires before stdio drains,
     // so destroying the streams on 'exit' would drop the final chunk. The
-    // output is generated inside the child (fs.writeSync) to avoid the
-    // Windows command-line length limit.
-    const chunk = "x".repeat(64 * 1024);
-    const tail = "END-OF-OUTPUT";
+    // data is generated at runtime inside the child so the argv stays short
+    // (Windows command-line limit is ~32K).
     const script =
-      `const fs = require("node:fs");` +
-      `const buf = Buffer.from('${chunk}${tail}');` +
-      `fs.writeSync(1, buf); process.exit(0);`;
+      "const fs=require('node:fs');" +
+      "const s='x'.repeat(65536)+'END-OF-OUTPUT';" +
+      "fs.writeSync(1, Buffer.from(s)); process.exit(0);";
     const result = await runProcess({
       binary: NODE,
       args: ["-e", script],
     });
     expect(result.truncated).toBe(false);
-    expect(result.stdout.endsWith(tail)).toBe(true);
-    expect(result.stdout.length).toBe(chunk.length + tail.length);
+    expect(result.stdout.endsWith("END-OF-OUTPUT")).toBe(true);
+    expect(result.stdout.length).toBe(65536 + "END-OF-OUTPUT".length);
   });
 });
 
