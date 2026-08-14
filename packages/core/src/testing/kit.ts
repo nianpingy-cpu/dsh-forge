@@ -34,6 +34,12 @@ export interface ToolArgsSpec {
 
 export interface ContractSuiteOptions {
   workspaceRoot: string;
+  /**
+   * Name of a tool that must return BinaryNotFound when its binary is
+   * absent. The kit executes it and asserts the normalized error code, so a
+   * plugin that fails to implement binary detection is caught here.
+   */
+  missingBinaryTool: string;
   /** Per-tool valid/invalid argument samples used by execution checks. */
   toolArgs: Record<string, ToolArgsSpec>;
 }
@@ -50,8 +56,8 @@ export function renderModelFacing(result: ToolResult): string {
   if (result.error) {
     lines.push(`error: ${result.error.code}: ${result.error.message}`);
   }
-  if (result.resultSummary) {
-    const s = result.resultSummary;
+  if (result.summaryBlock) {
+    const s = result.summaryBlock;
     lines.push(
       `findings: ${s.count} (error=${s.bySeverity.error}, warning=${s.bySeverity.warning}, info=${s.bySeverity.info}, critical=${s.bySeverity.critical})${s.truncated ? " [truncated]" : ""}`,
     );
@@ -214,10 +220,43 @@ export async function runContractSuite(
     }
   }
 
-  // 9. binary missing normalization: at least one tool must demonstrate
-  //    BinaryNotFound when its binary is unavailable. Plugins prove this in
-  //    their own suites with a missing-binary fixture; the kit checks that
-  //    the plugin declares which binary it wraps.
+  // 9. binary-missing path returns BinaryNotFound. The kit actually runs the
+  //    designated probe tool and asserts the normalized error code, so a
+  //    plugin that fails to implement binary detection (ToolFailure, throw,
+  //    ...) is caught instead of only checking a declared metadata string.
+  const probe = plugin.tools.find((t) => t.name === options.missingBinaryTool);
+  if (!probe) {
+    checks.push(
+      check(
+        "binary-missing path returns BinaryNotFound",
+        false,
+        `no tool named "${options.missingBinaryTool}" in the plugin`,
+      ),
+    );
+  } else {
+    try {
+      const probeResult = await probe.execute({}, ctx);
+      const detected =
+        probeResult.ok === false && probeResult.error?.code === "BinaryNotFound";
+      checks.push(
+        check(
+          "binary-missing path returns BinaryNotFound",
+          detected,
+          `got ok=${String(probeResult.ok)}, error=${String(probeResult.error?.code)}`,
+        ),
+      );
+    } catch (err) {
+      checks.push(
+        check(
+          "binary-missing path returns BinaryNotFound",
+          false,
+          `threw instead of returning normalized error: ${String(err)}`,
+        ),
+      );
+    }
+  }
+
+  // 10. the plugin declares which upstream binary it wraps.
   checks.push(
     check(
       "upstream binary declared",
