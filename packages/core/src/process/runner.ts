@@ -18,6 +18,14 @@ const KILL_ESCALATION_MS = 1000;
  */
 const DEADLINE_SLACK_MS = 2000;
 /**
+ * After the process exits, stdio still needs to drain (the pipe buffer may
+ * hold the tail of the output). We wait this long for the natural 'close'
+ * event; only if it has not fired (a descendant holding the pipes) do we
+ * force-destroy. This preserves output in the common case while bounding the
+ * descendant-holds-pipes hang.
+ */
+const CLOSE_GRACE_MS = 3000;
+/**
  * Auto-redaction only applies to env values at least this long. Short values
  * ("1", "0", "true", "read") are common substrings and must never be
  * globally replaced in captured output (that would corrupt the output).
@@ -227,6 +235,7 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
 
     let escalationTimer: ReturnType<typeof setTimeout> | undefined;
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    let closeGraceTimer: ReturnType<typeof setTimeout> | undefined;
 
     const finish = (exitCode: number | null, error?: ExecutionError) => {
       if (settled) return;
@@ -234,6 +243,7 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
       if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
       if (escalationTimer !== undefined) clearTimeout(escalationTimer);
       if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+      if (closeGraceTimer !== undefined) clearTimeout(closeGraceTimer);
       if (signal) signal.removeEventListener("abort", onAbort);
       const apply = (state: CaptureState): string =>
         redactList.length > 0 ? redactSecrets(state.data, redactList) : state.data;
@@ -300,13 +310,19 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
       finish(null, { code, message: `binary '${binary}': ${err.message}` });
     });
 
-    // Destroy the capture streams once the process has exited so the 'close'
-    // event cannot be held open by a descendant that inherited the pipes
-    // (e.g. a detached grandchild). Without this, runProcess could hang even
-    // after a clean exit when no timeout was configured.
+    // Do NOT destroy the capture streams immediately on 'exit': 'exit' fires
+    // before stdio has fully drained, and the pipe buffer may still hold the
+    // tail of the output. Instead, start a grace timer; only if 'close' has
+    // not fired within the grace period (a descendant holding the pipes) do
+    // we force-destroy, so the descendant-holds-pipes hang is bounded without
+    // losing output in the common case.
     child.on("exit", () => {
-      child.stdout?.destroy();
-      child.stderr?.destroy();
+      if (closeGraceTimer === undefined) {
+        closeGraceTimer = setTimeout(() => {
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }, CLOSE_GRACE_MS);
+      }
     });
 
     child.on("close", (code) => {
