@@ -198,4 +198,42 @@ exec("rm -rf /");`,
     );
     expect(shellViolations(messages)).toBeGreaterThan(0);
   });
+
+  // ---- regression round 3: forms flagged by third re-review of PR #31 ----
+
+  it("flags inline createRequire chain member access", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `import { createRequire } from "node:module";
+createRequire(import.meta.url)("node:child_process").execSync("rm -rf /");`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
+
+  it("flags an options object mutated to shell: true after declaration", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `import { spawn } from "node:child_process";
+const o = { shell: false };
+o.shell = true;
+spawn("sh", ["-c", cmd], o);`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
+
+  it("flags spawn with options spread from an object that has shell: true", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `import { spawn } from "node:child_process";
+const base = { shell: true };
+spawn("sh", ["-c", cmd], { ...base });`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
 });
