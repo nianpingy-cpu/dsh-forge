@@ -148,6 +148,19 @@ const ctx = (runner: ExecutionRunner, approved = true): ToolContext => ({
   permission: approved ? { approved: true } : undefined,
 });
 
+let hasRealAct = false;
+try {
+  hasRealAct = statSync(resolveActBinary()).isFile();
+} catch {
+  // act not installed; real-act tests are exercised on CI (Install act step)
+}
+
+function tempWorkspace(fixture: string): string {
+  const ws = mkdtempSync(join(tmpdir(), "dsh-act-fix-"));
+  cpSync(join(FIXTURES, fixture), ws, { recursive: true });
+  return ws;
+}
+
 describe("resolveActBinary", () => {
   it("resolves the act binary from PATH", () => {
     expect(resolveActBinary()).toBeTruthy();
@@ -277,6 +290,18 @@ describe("act_list_workflows", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("BinaryNotFound");
   });
+
+  it("lists the committed failing fixture with real act", async () => {
+    if (!hasRealAct) return;
+    const ws = tempWorkspace("failing");
+    const result = await tool().execute(
+      {},
+      { workspaceRoot: ws, run: actRunner, permission: { approved: true } },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain("1 workflow(s)");
+    expect(result.summary).toContain("CI");
+  });
 });
 
 describe("act_list_jobs", () => {
@@ -293,6 +318,67 @@ describe("act_list_jobs", () => {
     expect(result.ok).toBe(true);
     expect(result.summary).toContain("3 job(s) across 1 workflow(s)");
     expect(result.summary).toContain("build, test, deploy");
+  });
+
+  it("lists the committed multi-job fixture with real act", async () => {
+    if (!hasRealAct) return;
+    const ws = tempWorkspace("multi");
+    const result = await tool().execute(
+      {},
+      { workspaceRoot: ws, run: actRunner, permission: { approved: true } },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain("3 job(s)");
+    expect(result.summary).toContain("build, test, deploy");
+  });
+});
+
+describe("real act integration", () => {
+  it("validates the committed workflows with real act (--validate)", async () => {
+    if (!hasRealAct) return;
+    const ws = tempWorkspace("passing");
+    const runtime = mkdtempSync(join(tmpdir(), "dsh-act-validate-"));
+    const r = await runProcess({
+      binary: resolveActBinary(),
+      args: ["-C", ws, "--validate"],
+      cwd: runtime,
+      env: { HOME: runtime, USERPROFILE: runtime },
+      timeoutMs: 60_000,
+    });
+    expect(r.exitCode).toBe(0);
+  });
+
+  it("real act accepts the dry-run invocation flags (run path plumbing)", async () => {
+    if (!hasRealAct) return;
+    let actStderr = "";
+    let captured: ExecutionRequest | undefined;
+    const routingRunner: ExecutionRunner = async (req) => {
+      if (req.binary.toLowerCase().includes("docker")) {
+        return {
+          exitCode: 0,
+          stdout: "27.0.0",
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 1,
+        };
+      }
+      captured = req;
+      const r = await runProcess(req);
+      actStderr = r.stderr;
+      return r;
+    };
+    const t = actPlugin.tools.find((x) => x.name === "act_dry_run")!;
+    await t.execute(
+      {},
+      { workspaceRoot, run: routingRunner, permission: { approved: true } },
+    );
+    expect(captured).toBeTruthy();
+    expect(captured!.args[0]).toBe("-C");
+    // Real act ran the plugin's exact args/cwd/env; without a Docker daemon
+    // it fails on the connection, but it must not fail on unknown flags.
+    expect(actStderr).not.toMatch(/unknown flag|unknown shorthand flag|Unknown flag/i);
   });
 });
 

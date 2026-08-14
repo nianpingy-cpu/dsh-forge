@@ -320,6 +320,18 @@ function failureSummaryText(f: ParsedFailures): string {
   return parts.join("; ") || "no failures detected";
 }
 
+/**
+ * Failure message for a failed act run. If no recognizable failure markers
+ * were parsed (e.g. only a logrus FATA/panic line), fall back to the first
+ * output line so the model is never told "no failures detected" for a run
+ * that actually failed.
+ */
+function failureMessage(exec: ExecutionResult, f: ParsedFailures): string {
+  const text = failureSummaryText(f);
+  if (text === "no failures detected") return firstErrorLine(exec);
+  return text;
+}
+
 const actListWorkflows: ToolDefinition = {
   name: "act_list_workflows",
   description:
@@ -442,7 +454,7 @@ const actRun: ToolDefinition = {
     if (!ran.ok) return ran.result;
     if (ran.exec.exitCode !== 0) {
       const f = parseFailures(ran.exec.stdout + "\n" + ran.exec.stderr);
-      return toolFailure(failureSummaryText(f));
+      return toolFailure(failureMessage(ran.exec, f));
     }
     return okResult("all workflows passed", ran.exec.stdout);
   },
@@ -485,7 +497,7 @@ const actRunJob: ToolDefinition = {
     if (!ran.ok) return ran.result;
     if (ran.exec.exitCode !== 0) {
       const f = parseFailures(ran.exec.stdout + "\n" + ran.exec.stderr);
-      return toolFailure(`job ${jobId} failed: ${failureSummaryText(f)}`);
+      return toolFailure(`job ${jobId} failed: ${failureMessage(ran.exec, f)}`);
     }
     return okResult(`job ${jobId} passed`, ran.exec.stdout);
   },
