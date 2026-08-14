@@ -448,4 +448,23 @@ describe("runContractSuite", () => {
       report.checks.some((c) => !c.passed && /binary-missing/i.test(c.name)),
     ).toBe(true);
   });
+
+  it("passes binary-missing check when the probe tool requires args (missingBinaryToolArgs)", async () => {
+    // Real plugin tools usually require arguments before they reach ctx.run;
+    // the kit must let the plugin supply the probe invocation args so the
+    // binary-missing check is passable by real plugins.
+    const plugin: Plugin = {
+      metadata: { ...goodPlugin().metadata },
+      tools: [echoTool()],
+    };
+    const report = await runContractSuite(plugin, {
+      workspaceRoot,
+      missingBinaryTool: "echo_message",
+      missingBinaryToolArgs: { message: "probe" },
+      toolArgs: {
+        echo_message: { valid: { message: "x" }, invalid: { message: 1 } },
+      },
+    });
+    expect(report.passed).toBe(true);
+  });
 });

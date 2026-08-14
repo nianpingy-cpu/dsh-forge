@@ -49,6 +49,12 @@ export interface ContractSuiteOptions {
    */
   missingBinaryTool: string;
   /**
+   * Arguments to invoke the missing-binary probe with (defaults to {}). Real
+   * plugin tools usually require arguments before they reach ctx.run, so
+   * plugins supply the probe invocation here.
+   */
+  missingBinaryToolArgs?: unknown;
+  /**
    * Override the process runner used for the tool execution checks (defaults
    * to the real runProcess). Plugins may inject a mock to test tools without
    * depending on real binaries/environment.
@@ -284,7 +290,10 @@ export async function runContractSuite(
       },
     };
     try {
-      const probeResult = await probe.execute({}, missingBinaryCtx);
+      const probeResult = await probe.execute(
+        options.missingBinaryToolArgs ?? {},
+        missingBinaryCtx,
+      );
       const detected =
         runnerInvoked &&
         probeResult.ok === false &&
