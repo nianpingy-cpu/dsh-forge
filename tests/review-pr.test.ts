@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -150,8 +150,7 @@ describe("runReview (mocked, artifact writing)", () => {
           choices: [{ message: { content: JSON.stringify(validResponse) } }],
         }),
         { status: 200 },
-      ),
-    ) as typeof fetch;
+      )) as typeof fetch;
   });
 
   afterEach(() => {
@@ -197,8 +196,7 @@ describe("runReview (mocked, artifact writing)", () => {
           ],
         }),
         { status: 200 },
-      ),
-    ) as typeof fetch;
+      )) as typeof fetch;
     const exitCode = await runReview(makeInput(), {
       reviewerA: {
         provider: "openai-compatible",
