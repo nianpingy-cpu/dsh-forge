@@ -27,6 +27,7 @@
     "@dsh-forge/plugin-ruff": "workspace:*",
     "@dsh-forge/plugin-biome": "workspace:*",
     "@dsh-forge/plugin-uv": "workspace:*",
+    "@dsh-forge/plugin-act": "workspace:*",
     "@eslint/js": "^9.30.0",
     "@types/estree": "^1.0.7",
     "@types/node": "^24.13.3",

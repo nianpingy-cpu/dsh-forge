@@ -1,0 +1,18 @@
+{
+  "name": "@dsh-forge/plugin-act",
+  "version": "0.1.0",
+  "description": "act tools for DeepSeek Harness: list workflows, list jobs, dry-run, run, run job, failure summary (GitHub Actions local runner)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean"
+  },
+  "dependencies": {
+    "@dsh-forge/core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0"
+  }
+}
