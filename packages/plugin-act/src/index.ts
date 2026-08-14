@@ -18,7 +18,6 @@ import {
   type ToolDefinition,
   type ToolResult,
   type ToolContext,
-  type ExecutionRequest,
   type ExecutionResult,
 } from "@dsh-forge/core";
 import { resolveActBinary, ACT_BINARY_HINT } from "./binary.js";
@@ -219,12 +218,12 @@ function parseList(stdout: string): ParsedList {
     if (!line || /^Stage\s/.test(line)) continue;
     const parts = line.trim().split(/\s{2,}/);
     if (parts.length < 5) continue;
-    rows.push({
-      jobId: parts[1],
-      jobName: parts[2],
-      workflowName: parts[3],
-      workflowFile: parts[4],
-    });
+    const jobId = parts[1];
+    const jobName = parts[2];
+    const workflowName = parts[3];
+    const workflowFile = parts[4];
+    if (!jobId || !jobName || !workflowName || !workflowFile) continue;
+    rows.push({ jobId, jobName, workflowName, workflowFile });
   }
   const workflows: string[] = [];
   const seen = new Set<string>();
@@ -264,10 +263,10 @@ function parseFailures(log: string): ParsedFailures {
     const line = raw.trim();
     if (/Failure - /.test(line)) {
       const m = line.match(/Failure - (.+)$/);
-      if (m) failedSteps.push(m[1].trim());
+      if (m && m[1]) failedSteps.push(m[1].trim());
     } else if (/Job failed/.test(line)) {
       const m = line.match(/\[([^\]]+)\]/);
-      failedJobs.push(m ? m[1].trim() : line);
+      failedJobs.push(m && m[1] ? m[1].trim() : line);
     } else if (/^Error:/i.test(line)) {
       errors.push(line.replace(/^Error:\s*/i, "").trim());
     }
@@ -480,6 +479,7 @@ const actFailureSummary: ToolDefinition = {
     required: ["log"],
   },
   async execute(args, ctx) {
+    void ctx; // act_failure_summary is a pure parser; no runner access needed.
     const validated = validateArgs(this.inputSchema, args);
     if (!validated.ok) return invalid(validated.error);
     const { log } = validated.value as { log: string };
