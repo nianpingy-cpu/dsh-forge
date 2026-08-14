@@ -7,3 +7,4 @@
 export const CORE_VERSION = "0.1.0" as const;
 
 export * from "./process/runner.js";
+export * from "./diagnostics/types.js";
