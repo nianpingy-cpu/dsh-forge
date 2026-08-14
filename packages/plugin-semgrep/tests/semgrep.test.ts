@@ -270,27 +270,47 @@ describe("semgrep_scan", () => {
     expect(result.error?.message).toMatch(/Parse error/i);
   });
 
-  it("passes registry configs through verbatim (p/security-audit)", async () => {
-    let captured: ExecutionRequest | undefined;
-    const captureRunner: ExecutionRunner = async (req) => {
-      captured = req;
-      return {
-        exitCode: 0,
-        stdout: NO_FINDINGS_JSON,
-        stderr: "",
-        timedOut: false,
-        aborted: false,
-        truncated: false,
-        durationMs: 1,
+  it("passes registry configs through verbatim (auto, p/..., r/..., c/...)", async () => {
+    for (const cfg of ["auto", "p/security-audit", "r/python", "c/security-audit"]) {
+      let captured: ExecutionRequest | undefined;
+      const captureRunner: ExecutionRunner = async (req) => {
+        captured = req;
+        return {
+          exitCode: 0,
+          stdout: NO_FINDINGS_JSON,
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 1,
+        };
       };
-    };
-    const result = await tool().execute({ path: "clean" }, ctx(captureRunner));
-    expect(result.ok).toBe(true);
-    expect(captured).toBeTruthy();
-    const configIdx = captured!.args.indexOf("--config");
-    expect(configIdx).toBeGreaterThan(-1);
-    // Default config is `auto` (registry) — never resolved as a workspace path.
-    expect(captured!.args[configIdx + 1]).toBe("auto");
+      const result = await tool().execute({ path: "clean", rules: cfg }, ctx(captureRunner));
+      expect(result.ok).toBe(true);
+      expect(captured).toBeTruthy();
+      const configIdx = captured!.args.indexOf("--config");
+      // Registry config — never resolved as a workspace path.
+      expect(captured!.args[configIdx + 1]).toBe(cfg);
+    }
+  });
+
+  it("rejects a rules path that escapes the workspace", async () => {
+    const result = await tool().execute(
+      { path: "findings", rules: "../outside.yml" },
+      ctx(semgrepRunner),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+  });
+
+  it("rejects an absolute rules path outside the workspace", async () => {
+    const abs = join(tmpdir(), "outside.yml");
+    const result = await tool().execute(
+      { path: "findings", rules: abs },
+      ctx(semgrepRunner),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
   });
 });
 

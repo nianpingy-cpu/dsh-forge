@@ -116,19 +116,34 @@ function permissionDenied(): ToolResult {
 }
 
 /**
- * Resolve the `rules` argument. A value that looks like a local ruleset file
- * (.yml/.yaml/.json suffix) must resolve inside the workspace; everything else
- * (registry configs like `auto`, `p/security-audit`, `r/python`) passes
- * through verbatim to semgrep.
+ * Registry config identifiers semgrep understands. Everything else is treated
+ * as a local path and must resolve inside the workspace (rejecting absolute
+ * paths, `..` traversal, and Windows paths outside the boundary), so a
+ * prompt-injected `rules` value can never make semgrep read files outside the
+ * workspace (ISSUE-006 / ADR-005).
+ */
+const REGISTRY_CONFIG_RE =
+  /^(auto|secrets|supply-chain|p\/[A-Za-z0-9._-]+|r\/[A-Za-z0-9._-]+|c\/[A-Za-z0-9._-]+|x\/[A-Za-z0-9._-]+)$/i;
+
+/**
+ * Resolve the `rules` argument. Registry identifiers (no leading dash, not
+ * absolute, no `..`, no path separators other than the p//r//c//x/ prefix)
+ * pass through verbatim to semgrep; every other value is treated as a local
+ * path and routed through resolveInWorkspace so it stays in the workspace.
  */
 function resolveRules(
   workspaceRoot: string,
   rules: string | undefined,
 ): { ok: true; config: string } | { ok: false; result: ToolResult } {
   if (!rules) return { ok: true, config: "auto" };
-  const looksLikeLocalFile = /\.ya?ml$/i.test(rules) || /\.json$/i.test(rules);
-  if (!looksLikeLocalFile) return { ok: true, config: rules };
-  const resolved = resolveInsideWorkspace(workspaceRoot, rules);
+  if (typeof rules !== "string" || rules.trim() === "") {
+    return { ok: false, result: invalid("rules must be a non-empty string") };
+  }
+  const trimmed = rules.trim();
+  if (REGISTRY_CONFIG_RE.test(trimmed)) {
+    return { ok: true, config: trimmed };
+  }
+  const resolved = resolveInsideWorkspace(workspaceRoot, trimmed);
   if (!resolved.ok) return resolved;
   return { ok: true, config: resolved.absolute };
 }
