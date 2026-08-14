@@ -159,15 +159,30 @@ function attachCapture(
 /**
  * Terminate a child AND its descendants. On POSIX the child is spawned in its
  * own process group (detached) so the whole group can be signalled; on
- * Windows taskkill /T walks the tree. A child that ignores the graceful
- * signal is escalated to SIGKILL after a grace period.
+ * Windows taskkill /T walks the tree.
+ *
+ * Safety: before signalling a process group we liveness-check it (POSIX
+ * `process.kill(-pid, 0)`; ESRCH => skip). This prevents the SIGKILL
+ * escalation from hitting a RECYCLED pid/process-group on a busy host. On
+ * Windows, a child that already exited (exitCode set) is skipped for the same
+ * reason. Internal: exported for the regression tests.
  */
-function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
+export function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (!child.pid) return;
   if (process.platform === "win32") {
+    // exitCode is set once the child process itself has exited; after that a
+    // taskkill on the pid would risk signalling a recycled pid.
+    if (child.exitCode !== null) return;
     execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], () => {
       // best-effort; 'close' on the child resolves the promise
     });
+    return;
+  }
+  // Liveness check: if the process group is already gone, do not signal a
+  // recycled pgid (a host-level kill hazard).
+  try {
+    process.kill(-child.pid, 0);
+  } catch {
     return;
   }
   try {
@@ -291,10 +306,20 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
      * deadline guarantees the promise never hangs: a descendant that detaches
      * into its own process group/session can keep the capture pipes open and
      * prevent 'close' from firing, so we resolve on a hard timer.
+     *
+     * Idempotent: a timeout followed by an abort (or vice versa) must not
+     * send duplicate SIGTERM/SIGKILLs, which would widen the recycled-pid
+     * hazard window.
      */
+    let treeKilled = false;
     function terminateTree(): void {
+      if (treeKilled) return;
+      treeKilled = true;
       killTree(child, "SIGTERM");
       escalationTimer = setTimeout(() => {
+        // 'close' fired (finish resolved) -> nothing left to kill; skipping
+        // avoids signalling a recycled pid.
+        if (settled) return;
         killTree(child, "SIGKILL");
       }, KILL_ESCALATION_MS);
       if (deadlineTimer === undefined) {

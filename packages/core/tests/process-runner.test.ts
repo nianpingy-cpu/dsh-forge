@@ -11,6 +11,7 @@ import {
   runProcess,
   buildEnv,
   redactSecrets,
+  killTree,
   DEFAULT_ENV_ALLOWLIST,
 } from "@dsh-forge/core";
 
@@ -337,6 +338,20 @@ describe("runProcess", () => {
       autoRedact: false,
     });
     expect(result.stdout.trim()).toBe("tok-abcdef1234567890");
+  });
+
+  // ---- regression round 7: recycled-pid kill hazard from review of PR #33 ----
+
+  it("killTree safely no-ops on a nonexistent/recycled pid", async () => {
+    // A pid that cannot be a live process we own must never be signalled.
+    // process.kill with a huge pid throws ESRCH/EINVAL; killTree must swallow
+    // it without throwing or signalling anything.
+    const ghost = {
+      pid: 999999999,
+      exitCode: null,
+      kill: () => {},
+    } as unknown as import("node:child_process").ChildProcess;
+    expect(() => killTree(ghost, "SIGKILL")).not.toThrow();
   });
 });
 
