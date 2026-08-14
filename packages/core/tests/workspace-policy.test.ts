@@ -69,6 +69,10 @@ describe("resolveInWorkspace", () => {
   });
 
   it("handles Windows-style backslash separators", () => {
+    // On POSIX a backslash is a literal filename character, so this is a
+    // Windows-only convention; on POSIX the same input must NOT be treated
+    // as a separator.
+    if (process.platform !== "win32") return;
     const resolved = resolveInWorkspace(root, "src\\a.ts");
     expect(resolved).toBe(resolve(root, "src", "a.ts"));
   });
@@ -118,18 +122,36 @@ describe("resolveInWorkspace", () => {
     const danglingDir = join(root, "dangling-dir");
     const target = join(outside, "does-not-exist");
     try {
+      // A junction to a non-existent target is a reliable dangling link on
+      // Windows too (lstat succeeds, realpath throws ENOENT).
       if (process.platform === "win32") {
-        // junction requires an existing target; a broken junction can't be
-        // created reliably, so exercise a non-writable-ancestor variant only
-        // on POSIX.
-        return;
+        symlinkSync(target, danglingDir, "junction");
+      } else {
+        symlinkSync(target, danglingDir);
       }
-      symlinkSync(target, danglingDir);
       expect(() =>
         resolveInWorkspace(root, join("dangling-dir", "evil.txt")),
       ).toThrow();
     } finally {
       rmSync(danglingDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a dangling symlink at the leaf (target IS the link)", () => {
+    // A target that is itself a dangling symlink must be rejected, not
+    // resurrected as "canonical" after walking up and re-appending the tail
+    // — a later write would follow the link outside the workspace.
+    const danglingLeaf = join(root, "dangle-leaf");
+    const target = join(outside, "does-not-exist");
+    try {
+      if (process.platform === "win32") {
+        symlinkSync(target, danglingLeaf, "junction");
+      } else {
+        symlinkSync(target, danglingLeaf);
+      }
+      expect(() => resolveInWorkspace(root, "dangle-leaf")).toThrow();
+    } finally {
+      rmSync(danglingLeaf, { recursive: true, force: true });
     }
   });
 });
