@@ -1,7 +1,8 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   validateArgs,
   renderModelFacing,
@@ -118,6 +119,22 @@ function invalidArgs(message: string): ToolResult {
     error: { code: "InvalidArguments", message },
   };
 }
+
+describe("package export surface", () => {
+  it("validateArgs has a single source of truth (plugin/types, not kit)", () => {
+    // Under native ESM a value star-exported from two modules via the same
+    // binding is silently deduped, so a runtime import test cannot detect a
+    // duplicate. The published artifact must expose validateArgs exactly once
+    // (index.ts already exports it via ./plugin/types.js); kit.ts must NOT
+    // value re-export it, otherwise bundlers/TS consumers can hit ambiguous
+    // export errors.
+    const kitPath = fileURLToPath(
+      new URL("../src/testing/kit.ts", import.meta.url),
+    );
+    const kitSource = readFileSync(kitPath, "utf8");
+    expect(kitSource).not.toMatch(/export\s*\{\s*validateArgs\b/);
+  });
+});
 
 describe("validateArgs", () => {
   const schema = echoTool().inputSchema;
