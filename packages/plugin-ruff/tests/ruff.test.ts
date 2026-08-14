@@ -115,6 +115,35 @@ describe("ruff_check", () => {
     expect(result.error?.code).toBe("ParseFailure");
   });
 
+  it("surfaces truncated output as a cap error, not a parse failure", async () => {
+    // A truncated stream must never be misreported as malformed JSON.
+    const truncatedCtx: ToolContext = {
+      workspaceRoot,
+      run: async () => ({
+        exitCode: 0,
+        stdout: "[{",
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: true,
+        durationMs: 1,
+      }),
+    };
+    const result = await tool().execute(
+      { paths: ["fixtures/sample.py"] },
+      truncatedCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
+    expect(result.error?.message).toMatch(/output cap/);
+  });
+
+  it("rejects an empty path entry", async () => {
+    const result = await tool().execute({ paths: [""] }, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
   it("reports BinaryNotFound when the binary is missing", async () => {
     const missingCtx: ToolContext = {
       workspaceRoot,
@@ -210,6 +239,12 @@ describe("ruff_explain", () => {
 
   it("rejects an empty code", async () => {
     const result = await tool().execute({ code: "" }, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("rejects a leading-dash code (flag injection)", async () => {
+    const result = await tool().execute({ code: "--config" }, ctx);
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("InvalidArguments");
   });

@@ -73,6 +73,11 @@ function safePaths(
 ): { ok: true; absolute: string[] } | { ok: false; result: ToolResult } {
   const absolute: string[] = [];
   for (const p of paths) {
+    if (p === "") {
+      // An empty entry resolves to the workspace root and would silently
+      // scope the operation to the whole workspace.
+      return { ok: false, result: invalid("paths must not contain empty entries") };
+    }
     try {
       absolute.push(resolveInWorkspace(workspaceRoot, p));
     } catch (err) {
@@ -140,6 +145,9 @@ async function runRuff(
     args,
     cwd: ctx.workspaceRoot,
     timeoutMs: 30_000,
+    // Ruff JSON can be large for whole-workspace lints; raise the cap well
+    // above the 1 MiB default so large-but-valid results are not truncated.
+    maxOutputBytes: 10 * 1024 * 1024,
   });
   if (execution.error?.code === "BinaryNotFound") {
     return { ok: false, result: binaryNotFound(binary) };
@@ -153,6 +161,22 @@ async function runRuff(
         error: {
           code: "Timeout",
           message: "ruff exceeded the 30000ms execution timeout",
+        },
+      },
+    };
+  }
+  // A truncated stream must surface as a distinct error, never as a
+  // misleading "malformed JSON" parse failure on an incomplete payload.
+  if (execution.truncated) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        summary: "ruff output exceeded the output cap",
+        error: {
+          code: "ToolFailure",
+          message:
+            "ruff output exceeded the 10 MiB output cap; the result was truncated",
         },
       },
     };
@@ -284,7 +308,7 @@ const ruffCheck: ToolDefinition = {
     if (!safe.ok) return safe.result;
     const missing = await requireExisting(safe.absolute);
     if (missing) return missing;
-    const argv = ["check", "--output-format", "json"];
+    const argv = ["check", "--no-cache", "--output-format", "json"];
     if (select) argv.push("--select", select);
     if (ignore) argv.push("--ignore", ignore);
     argv.push(...safe.absolute);
@@ -324,6 +348,7 @@ const ruffFormatCheck: ToolDefinition = {
     const run = await runRuff(ctx, [
       "format",
       "--check",
+      "--no-cache",
       "--output-format",
       "json",
       ...safe.absolute,
@@ -358,6 +383,11 @@ const ruffExplain: ToolDefinition = {
     const { code } = validated.value as { code: string };
     if (typeof code !== "string" || code.trim() === "") {
       return invalid("code must be a non-empty ruff rule code");
+    }
+    // A leading dash or whitespace would shift ruff's own flag parsing; only
+    // plain rule codes like E501 or S101 are accepted.
+    if (code.startsWith("-") || /\s/.test(code)) {
+      return invalid("code must be a plain ruff rule code (e.g. E501)");
     }
     const run = await runRuff(ctx, ["rule", code, "--output-format", "json"]);
     if (!run.ok) return run.result;
@@ -405,7 +435,16 @@ function verifyTargetFiles(
         : typeof e.path === "string"
           ? e.path
           : undefined;
-    if (!raw) continue;
+    if (!raw) {
+      // A match with no file identity means we cannot vouch for what ruff
+      // would write; treat it as a hard error, never a silent success.
+      return {
+        ok: false,
+        result: toolFailure(
+          "ruff returned a finding without a filename; cannot verify the write target",
+        ),
+      };
+    }
     try {
       files.push(resolveInWorkspace(workspaceRoot, raw));
     } catch (err) {
@@ -460,7 +499,7 @@ const ruffFix: ToolDefinition = {
 
     // Probe (read-only, no --fix) to discover the exact files ruff would
     // touch, then boundary-verify each before any write (ADR-005).
-    const probeArgs = ["check", "--output-format", "json"];
+    const probeArgs = ["check", "--no-cache", "--output-format", "json"];
     if (select) probeArgs.push("--select", select);
     if (ignore) probeArgs.push("--ignore", ignore);
     probeArgs.push(...safe.absolute);
@@ -475,7 +514,7 @@ const ruffFix: ToolDefinition = {
     }
 
     // Apply --fix only to the boundary-verified file list.
-    const applyArgs = ["check", "--fix", "--output-format", "json"];
+    const applyArgs = ["check", "--no-cache", "--fix", "--output-format", "json"];
     if (select) applyArgs.push("--select", select);
     if (ignore) applyArgs.push("--ignore", ignore);
     applyArgs.push(...verified.files);
@@ -542,6 +581,14 @@ const ruffFormat: ToolDefinition = {
 
     const apply = await runRuff(ctx, ["format", ...verified.files]);
     if (!apply.ok) return apply.result;
+    // `ruff format` (without --check) exits 1 on errors (e.g. unparseable
+    // files); runRuff's grep-style rule treats 0/1 as success, so surface
+    // exit 1 explicitly as a failure here.
+    if (apply.exitCode === 1) {
+      return toolFailure(
+        apply.stderr.trim().split("\n")[0] || "ruff format failed",
+      );
+    }
     const summary = apply.stdout.trim() || "formatted";
     return {
       ok: true,
