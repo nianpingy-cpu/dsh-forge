@@ -310,6 +310,29 @@ function findingsToDiagnostics(
   return out;
 }
 
+/**
+ * Redact Secrets[].Match (plaintext secret values) from a trivy report JSON so
+ * raw output never leaks secrets to the model/logs. Non-JSON text passes
+ * through unchanged (trivy --format json is always JSON, so this is a guard).
+ */
+function redactReportSecrets(text: string): string {
+  try {
+    const data = JSON.parse(text) as { Results?: TrivyResult[] };
+    let changed = false;
+    for (const r of data.Results ?? []) {
+      for (const s of r.Secrets ?? []) {
+        if (s.Match !== undefined) {
+          (s as { Match?: unknown }).Match = "[REDACTED]";
+          changed = true;
+        }
+      }
+    }
+    return changed ? JSON.stringify(data) : text;
+  } catch {
+    return text;
+  }
+}
+
 function reportResult(
   workspaceRoot: string,
   run: { ok: true; stdout: string },
@@ -325,6 +348,7 @@ function reportResult(
     type,
   );
   const includeRaw = opts?.includeRaw ?? true;
+  const safeRaw = redactReportSecrets(run.stdout);
   return {
     ok: true,
     summary:
@@ -335,10 +359,10 @@ function reportResult(
         ? summarizeDiagnostics(TOOL, diagnostics)
         : undefined,
     raw:
-      includeRaw && run.stdout.length > 20_000
-        ? run.stdout.slice(0, 20_000) + "\n...[truncated]"
+      includeRaw && safeRaw.length > 20_000
+        ? safeRaw.slice(0, 20_000) + "\n...[truncated]"
         : includeRaw
-          ? run.stdout
+          ? safeRaw
           : undefined,
   };
 }

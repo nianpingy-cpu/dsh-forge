@@ -128,6 +128,42 @@ describe("trivy_repo_scan", () => {
     expect(b.error?.code).toBe("InvalidArguments");
   });
 
+  it("redacts secret Match values from raw output", async () => {
+    const withSecrets = JSON.stringify({
+      Results: [
+        {
+          Target: "repo",
+          Class: "secret",
+          Secrets: [
+            {
+              RuleID: "aws-access-key-id",
+              Severity: "CRITICAL",
+              Title: "AWS Access Key ID",
+              Match: "AKIA5K4D3X7Q2T9P0Z1W",
+            },
+          ],
+        },
+      ],
+    });
+    const mock: ExecutionRunner = async () => ({
+      exitCode: 0,
+      stdout: withSecrets,
+      stderr: "",
+      timedOut: false,
+      aborted: false,
+      truncated: false,
+      durationMs: 1,
+    });
+    const result = await tool().execute(
+      { repo: "https://github.com/foo/bar.git" },
+      ctx(mock),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.raw).toBeTruthy();
+    expect(result.raw).not.toContain("AKIA5K4D3X7Q2T9P0Z1W");
+    expect(result.raw).toContain("[REDACTED]");
+  });
+
   it("rejects a repo path that escapes the workspace", async () => {
     const result = await tool().execute({ repo: "../outside-repo" }, ctx(trivyRunner));
     expect(result.ok).toBe(false);
