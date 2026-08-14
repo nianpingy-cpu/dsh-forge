@@ -92,6 +92,29 @@ describe("ruff_check", () => {
     expect(result.error?.code).toBe("ParseFailure");
   });
 
+  it("treats a non-array JSON payload as a parse failure", async () => {
+    // A syntactically valid object (e.g. an error payload) must never be
+    // silently reported as zero findings.
+    const objectCtx: ToolContext = {
+      workspaceRoot,
+      run: async () => ({
+        exitCode: 0,
+        stdout: '{"error":"something broke"}',
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      }),
+    };
+    const result = await tool().execute(
+      { paths: ["fixtures/sample.py"] },
+      objectCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ParseFailure");
+  });
+
   it("reports BinaryNotFound when the binary is missing", async () => {
     const missingCtx: ToolContext = {
       workspaceRoot,
@@ -249,6 +272,48 @@ describe("ruff_fix", () => {
     const remaining = result.diagnostics ?? [];
     expect(remaining.some((d) => d.rule === "F821")).toBe(true);
   });
+
+  it("blocks fix when a matched file escapes the workspace (symlink escape)", async () => {
+    const outsideFile = join(workspaceRoot, "..", `outside-fix-${Date.now()}.py`);
+    let applied = false;
+    const mockCtx: ToolContext = {
+      workspaceRoot,
+      permission: { approved: true },
+      run: async (req) => {
+        // Probe (no --fix) reports a match in an outside file.
+        if (!req.args.includes("--fix")) {
+          return {
+            exitCode: 1,
+            stdout: JSON.stringify([
+              { code: "F401", filename: outsideFile, location: { row: 1, column: 1 } },
+            ]),
+            stderr: "",
+            timedOut: false,
+            aborted: false,
+            truncated: false,
+            durationMs: 1,
+          };
+        }
+        applied = true;
+        return {
+          exitCode: 0,
+          stdout: "[]",
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 1,
+        };
+      },
+    };
+    const result = await tool().execute(
+      { paths: ["fixtures/sample.py"] },
+      mockCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+    expect(applied).toBe(false);
+  });
 });
 
 describe("ruff_format", () => {
@@ -284,6 +349,48 @@ describe("ruff_format", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("PermissionDenied");
+  });
+
+  it("blocks format when a matched file escapes the workspace (symlink escape)", async () => {
+    const outsideFile = join(workspaceRoot, "..", `outside-fmt-${Date.now()}.py`);
+    let applied = false;
+    const mockCtx: ToolContext = {
+      workspaceRoot,
+      permission: { approved: true },
+      run: async (req) => {
+        // Probe (format --check) reports the outside file as unformatted.
+        if (req.args.includes("--check")) {
+          return {
+            exitCode: 1,
+            stdout: JSON.stringify([
+              { code: "unformatted", filename: outsideFile, location: { row: 1, column: 1 } },
+            ]),
+            stderr: "",
+            timedOut: false,
+            aborted: false,
+            truncated: false,
+            durationMs: 1,
+          };
+        }
+        applied = true;
+        return {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 1,
+        };
+      },
+    };
+    const result = await tool().execute(
+      { paths: ["fixtures/unformatted.py"] },
+      mockCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+    expect(applied).toBe(false);
   });
 });
 

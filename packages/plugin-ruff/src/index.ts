@@ -96,6 +96,9 @@ interface RuffEntry {
   message?: unknown;
   severity?: unknown;
   filename?: unknown;
+  // Ruff format --check JSON historically used `path`; accept it as a fallback
+  // so a schema shift does not silently degrade diagnostics.
+  path?: unknown;
   location?: { row?: unknown; column?: unknown };
   fix?: { message?: unknown } | null;
 }
@@ -107,11 +110,18 @@ function ruffEntryToDiagnostic(workspaceRoot: string, e: RuffEntry): Diagnostic 
     rule: typeof e.code === "string" ? e.code : undefined,
     file: toRelativeFile(
       workspaceRoot,
-      typeof e.filename === "string" ? e.filename : undefined,
+      typeof e.filename === "string"
+        ? e.filename
+        : typeof e.path === "string"
+          ? e.path
+          : undefined,
     ),
     line: e.location?.row,
     column: e.location?.column,
-    message: typeof e.message === "string" ? e.message : "(no message)",
+    message:
+      typeof e.message === "string" && e.message !== ""
+        ? e.message
+        : "finding",
     suggestion: typeof e.fix?.message === "string" ? e.fix.message : undefined,
     fixable: Boolean(e.fix),
   });
@@ -124,7 +134,7 @@ async function runRuff(
   | { ok: true; stdout: string; stderr: string; exitCode: number }
   | { ok: false; result: ToolResult }
 > {
-  const binary = resolveRuffBinary() ?? "ruff";
+  const binary = resolveRuffBinary();
   const execution = await ctx.run({
     binary,
     args,
@@ -142,7 +152,7 @@ async function runRuff(
         summary: "ruff timed out",
         error: {
           code: "Timeout",
-          message: `ruff exceeded the ${execution.durationMs}ms execution timeout`,
+          message: "ruff exceeded the 30000ms execution timeout",
         },
       },
     };
@@ -196,10 +206,23 @@ function parseRuffJson(run: { ok: true; stdout: string }): {
       },
     };
   }
-  const entries = Array.isArray(parsed.value)
-    ? (parsed.value as RuffEntry[])
-    : [];
-  return { ok: true, entries };
+  // check / format --check / fix always emit a JSON array. A non-array
+  // payload (e.g. an error object) must be a ParseFailure, never silently
+  // reported as zero findings.
+  if (!Array.isArray(parsed.value)) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        summary: "ruff produced unexpected output",
+        error: {
+          code: "ParseFailure",
+          message: "ruff: expected a JSON array, got " + typeof parsed.value,
+        },
+      },
+    };
+  }
+  return { ok: true, entries: parsed.value as RuffEntry[] };
 }
 
 function resultWithDiagnostics(
@@ -364,6 +387,44 @@ const ruffExplain: ToolDefinition = {
   },
 };
 
+/**
+ * Boundary-verify every file a write operation would touch. Ruff re-walks
+ * directories at write time and follows symlinks, so a symlink inside the
+ * workspace pointing outside must be rejected (ADR-005) before any write.
+ * Returns the verified canonical file list, or a blocking ToolResult.
+ */
+function verifyTargetFiles(
+  workspaceRoot: string,
+  entries: RuffEntry[],
+): { ok: true; files: string[] } | { ok: false; result: ToolResult } {
+  const files: string[] = [];
+  for (const e of entries) {
+    const raw =
+      typeof e.filename === "string"
+        ? e.filename
+        : typeof e.path === "string"
+          ? e.path
+          : undefined;
+    if (!raw) continue;
+    try {
+      files.push(resolveInWorkspace(workspaceRoot, raw));
+    } catch (err) {
+      if (err instanceof WorkspaceViolationError) {
+        return {
+          ok: false,
+          result: {
+            ok: false,
+            summary: "rewrite blocked: matched file escapes the workspace",
+            error: { code: "WorkspaceViolation", message: err.message },
+          },
+        };
+      }
+      throw err;
+    }
+  }
+  return { ok: true, files };
+}
+
 const ruffFix: ToolDefinition = {
   name: "ruff_fix",
   description:
@@ -396,20 +457,43 @@ const ruffFix: ToolDefinition = {
     if (!safe.ok) return safe.result;
     const missing = await requireExisting(safe.absolute);
     if (missing) return missing;
-    const argv = ["check", "--fix", "--output-format", "json"];
-    if (select) argv.push("--select", select);
-    if (ignore) argv.push("--ignore", ignore);
-    argv.push(...safe.absolute);
-    const run = await runRuff(ctx, argv);
-    if (!run.ok) return run.result;
-    const parsed = parseRuffJson(run);
-    if (!parsed.ok) return parsed.result;
-    const remaining = parsed.entries.length;
+
+    // Probe (read-only, no --fix) to discover the exact files ruff would
+    // touch, then boundary-verify each before any write (ADR-005).
+    const probeArgs = ["check", "--output-format", "json"];
+    if (select) probeArgs.push("--select", select);
+    if (ignore) probeArgs.push("--ignore", ignore);
+    probeArgs.push(...safe.absolute);
+    const probe = await runRuff(ctx, probeArgs);
+    if (!probe.ok) return probe.result;
+    const probeParsed = parseRuffJson(probe);
+    if (!probeParsed.ok) return probeParsed.result;
+    const verified = verifyTargetFiles(ctx.workspaceRoot, probeParsed.entries);
+    if (!verified.ok) return verified.result;
+    if (verified.files.length === 0) {
+      return { ok: true, summary: "all auto-fixable findings fixed", raw: "" };
+    }
+
+    // Apply --fix only to the boundary-verified file list.
+    const applyArgs = ["check", "--fix", "--output-format", "json"];
+    if (select) applyArgs.push("--select", select);
+    if (ignore) applyArgs.push("--ignore", ignore);
+    applyArgs.push(...verified.files);
+    const apply = await runRuff(ctx, applyArgs);
+    if (!apply.ok) return apply.result;
+    const applyParsed = parseRuffJson(apply);
+    if (!applyParsed.ok) return applyParsed.result;
+    const remaining = applyParsed.entries.length;
     const summary =
       remaining === 0
         ? "all auto-fixable findings fixed"
         : `${remaining} finding${remaining === 1 ? "" : "s"} remaining (unfixable or not selected)`;
-    return resultWithDiagnostics(ctx.workspaceRoot, parsed.entries, summary, run);
+    return resultWithDiagnostics(
+      ctx.workspaceRoot,
+      applyParsed.entries,
+      summary,
+      apply,
+    );
   },
 };
 
@@ -437,16 +521,35 @@ const ruffFormat: ToolDefinition = {
     if (!safe.ok) return safe.result;
     const missing = await requireExisting(safe.absolute);
     if (missing) return missing;
-    const run = await runRuff(ctx, ["format", ...safe.absolute]);
-    if (!run.ok) return run.result;
-    const summary = run.stdout.trim() || "formatted";
+
+    // Probe with format --check (read-only) to discover the exact files
+    // needing formatting, then boundary-verify each before writing.
+    const probe = await runRuff(ctx, [
+      "format",
+      "--check",
+      "--output-format",
+      "json",
+      ...safe.absolute,
+    ]);
+    if (!probe.ok) return probe.result;
+    const probeParsed = parseRuffJson(probe);
+    if (!probeParsed.ok) return probeParsed.result;
+    const verified = verifyTargetFiles(ctx.workspaceRoot, probeParsed.entries);
+    if (!verified.ok) return verified.result;
+    if (verified.files.length === 0) {
+      return { ok: true, summary: "all files formatted", raw: "" };
+    }
+
+    const apply = await runRuff(ctx, ["format", ...verified.files]);
+    if (!apply.ok) return apply.result;
+    const summary = apply.stdout.trim() || "formatted";
     return {
       ok: true,
       summary,
       raw:
-        run.stdout.length > 20_000
-          ? run.stdout.slice(0, 20_000) + "\n...[truncated]"
-          : run.stdout,
+        apply.stdout.length > 20_000
+          ? apply.stdout.slice(0, 20_000) + "\n...[truncated]"
+          : apply.stdout,
     };
   },
 };
