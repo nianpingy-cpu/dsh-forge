@@ -305,4 +305,37 @@ describe("runContractSuite", () => {
       report.checks.some((c) => !c.passed && /binary-missing/i.test(c.name)),
     ).toBe(true);
   });
+
+  it("fails when a tool returns ok:false for valid arguments", async () => {
+    // "typed args accepted" must be actually enforced: a stub that always
+    // returns a normalized failure for valid args is a non-functional tool
+    // and must not pass the kit.
+    const stub: ToolDefinition = {
+      ...echoTool(),
+      name: "echo_stub",
+      async execute() {
+        return {
+          ok: false,
+          summary: "stub",
+          error: { code: "ToolFailure", message: "stub" },
+        };
+      },
+    };
+    const plugin: Plugin = {
+      metadata: { ...goodPlugin().metadata },
+      tools: [stub, missingBinaryTool()],
+    };
+    const report = await runContractSuite(plugin, {
+      workspaceRoot,
+      missingBinaryTool: "probe_missing",
+      toolArgs: {
+        echo_stub: { valid: { message: "x" }, invalid: {} },
+        probe_missing: { valid: {}, invalid: { x: 1 } },
+      },
+    });
+    expect(report.passed).toBe(false);
+    expect(
+      report.checks.some((c) => !c.passed && /typed args accepted/i.test(c.name)),
+    ).toBe(true);
+  });
 });
