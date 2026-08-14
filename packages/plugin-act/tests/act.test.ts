@@ -331,6 +331,45 @@ describe("act_failure_summary", () => {
   });
 });
 
+describe("security model", () => {
+  it("declares the correct mutation classes", () => {
+    const cls = (name: string) =>
+      actPlugin.tools.find((t) => t.name === name)!.mutationClass;
+    expect(cls("act_list_workflows")).toBe("read");
+    expect(cls("act_list_jobs")).toBe("read");
+    expect(cls("act_failure_summary")).toBe("read");
+    expect(cls("act_dry_run")).toBe("process");
+    expect(cls("act_run")).toBe("system-change");
+    expect(cls("act_run_job")).toBe("system-change");
+  });
+
+  it("runs act from a neutral cwd with -C so a repo .actrc cannot inject flags", async () => {
+    let captured: ExecutionRequest | undefined;
+    const captureRunner: ExecutionRunner = async (req) => {
+      captured = req;
+      return {
+        exitCode: 0,
+        stdout:
+          "Stage  Job ID  Job name  Workflow name  Workflow file  Events\n0      test    test      CI             ci.yml         push",
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      };
+    };
+    const t = actPlugin.tools.find((x) => x.name === "act_list_workflows")!;
+    const result = await t.execute({}, ctx(captureRunner));
+    expect(result.ok).toBe(true);
+    expect(captured).toBeTruthy();
+    expect(captured!.args[0]).toBe("-C");
+    expect(captured!.args[1]).toBe(workspaceRoot);
+    expect(captured!.cwd).not.toBe(workspaceRoot);
+    expect(captured!.env?.HOME).toBeTruthy();
+    expect(captured!.env?.USERPROFILE).toBeTruthy();
+  });
+});
+
 describe("contract suite", () => {
   it("passes the shared plugin contract kit", async () => {
     const report = await runContractSuite(actPlugin, {

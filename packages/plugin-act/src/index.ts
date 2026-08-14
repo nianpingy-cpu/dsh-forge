@@ -4,13 +4,19 @@
  * Typed tools compiled to act argv[] — no shell, no free-form commands.
  *   read:            act_list_workflows, act_list_jobs, act_failure_summary
  *   process:         act_dry_run
- *   workspace-write: act_run, act_run_job   (workflow steps may write the
- *                     workspace, e.g. checkout — permission-gated)
+ *   system-change:   act_run, act_run_job   (execute containers / change state
+ *                     outside the workspace — permission-gated)
  *
  * Docker is required to actually run jobs. Docker availability is probed
  * BEFORE invoking act for the run tools, and a missing/unreachable Docker is
  * reported as an explicit "Docker is not available" tool error — never as a
  * workflow failure. `act -l` (list) works without Docker.
+ *
+ * act reads `.actrc` from its process cwd and home dir, which is a flag-
+ * injection vector when cwd is the workspace. Every act invocation therefore
+ * runs from a neutral runtime dir (no .actrc), points at the project with
+ * `-C`, and neutralizes HOME/USERPROFILE so a repo-planted `.actrc` cannot
+ * inject arbitrary act flags (--privileged, --secret, --network, ...).
  */
 import {
   validateArgs,
@@ -20,6 +26,9 @@ import {
   type ToolContext,
   type ExecutionResult,
 } from "@dsh-forge/core";
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resolveActBinary, ACT_BINARY_HINT } from "./binary.js";
 
 // Platform → image overrides so act does not prompt interactively for a
@@ -34,6 +43,14 @@ const PLATFORM_FLAGS = [
   "-P",
   "ubuntu-20.04=catthehacker/ubuntu:act-20.04",
 ] as const;
+
+// Neutral runtime dir used as act's process cwd so a repo-controlled `.actrc`
+// in the workspace is never read (act loads .actrc from its cwd + home).
+const RUNTIME_DIR = join(tmpdir(), "dsh-act-runtime");
+
+function ensureRuntimeDir(): void {
+  mkdirSync(RUNTIME_DIR, { recursive: true });
+}
 
 function invalid(message: string): ToolResult {
   return {
@@ -144,12 +161,17 @@ async function execAct(
 > {
   const binary = resolveActBinary();
   const timeoutMs = opts.timeoutMs ?? 300_000;
+  ensureRuntimeDir();
   let exec: ExecutionResult;
   try {
     exec = await ctx.run({
       binary,
-      args: [...args],
-      cwd: ctx.workspaceRoot,
+      // -C points act at the project; cwd stays neutral so a repo `.actrc`
+      // cannot inject flags, and HOME/USERPROFILE are neutralized so the
+      // user/CI home `.actrc` is ignored too.
+      args: ["-C", ctx.workspaceRoot, ...args],
+      cwd: RUNTIME_DIR,
+      env: { HOME: RUNTIME_DIR, USERPROFILE: RUNTIME_DIR },
       timeoutMs,
       maxOutputBytes: 10 * 1024 * 1024,
     });
@@ -391,8 +413,8 @@ const actDryRun: ToolDefinition = {
 const actRun: ToolDefinition = {
   name: "act_run",
   description:
-    "Run all workflows in the workspace with act (workspace-write: workflow steps may write the workspace; requires permission approval and Docker).",
-  mutationClass: "workspace-write",
+    "Run all workflows in the workspace with act (system-change: executes containers / changes state outside the workspace; requires permission approval and Docker).",
+  mutationClass: "system-change",
   inputSchema: {
     type: "object",
     properties: {},
@@ -402,7 +424,7 @@ const actRun: ToolDefinition = {
     const validated = validateArgs(this.inputSchema, args);
     if (!validated.ok) return invalid(validated.error);
     if (
-      !assertPermission("workspace-write", ctx.permission ?? { approved: false })
+      !assertPermission("system-change", ctx.permission ?? { approved: false })
     ) {
       return permissionDenied();
     }
@@ -423,8 +445,8 @@ const actRun: ToolDefinition = {
 const actRunJob: ToolDefinition = {
   name: "act_run_job",
   description:
-    "Run a single job (by job id from `act -l`) with act (workspace-write: workflow steps may write the workspace; requires permission approval and Docker).",
-  mutationClass: "workspace-write",
+    "Run a single job (by job id from `act -l`) with act (system-change: executes containers / changes state outside the workspace; requires permission approval and Docker).",
+  mutationClass: "system-change",
   inputSchema: {
     type: "object",
     properties: {
@@ -443,7 +465,7 @@ const actRunJob: ToolDefinition = {
       return invalid("jobId must be a non-empty job id");
     }
     if (
-      !assertPermission("workspace-write", ctx.permission ?? { approved: false })
+      !assertPermission("system-change", ctx.permission ?? { approved: false })
     ) {
       return permissionDenied();
     }
