@@ -108,6 +108,37 @@ interface BiomeEntry {
     path?: unknown;
     start?: { line?: unknown; column?: unknown };
   };
+  // Biome's reporter has emitted position data under `span` in some versions;
+  // accept both shapes so a schema shift never silently drops positions.
+  span?: {
+    start?: { line?: unknown; column?: unknown };
+  };
+}
+
+/**
+ * Extract (line, column) from a biome diagnostic. Biome's reporter emits
+ * 1-based `location.start.line`/`column` for lint findings (verified against
+ * the pinned @biomejs/biome 2.5.8: a first-line finding reports line 1).
+ * The format diagnostic reports line 0 as a whole-file sentinel, which is
+ * mapped to undefined (no specific line). Accepts both `location.start` and
+ * the `span.start` shape for schema robustness.
+ */
+function biomePosition(
+  e: BiomeEntry,
+): { line?: number; column?: number } {
+  const start =
+    (e.location?.start as { line?: unknown; column?: unknown } | undefined) ??
+    e.span?.start ??
+    {};
+  const rawLine =
+    typeof start.line === "number" && Number.isFinite(start.line)
+      ? start.line
+      : undefined;
+  const column =
+    typeof start.column === "number" && Number.isFinite(start.column)
+      ? start.column
+      : undefined;
+  return { line: rawLine !== undefined && rawLine > 0 ? rawLine : undefined, column };
 }
 
 /** Normalize a biome JSON diagnostic into a core Diagnostic. */
@@ -116,6 +147,7 @@ function biomeEntryToDiagnostic(
   e: BiomeEntry,
   severityOverride?: Severity,
 ): Diagnostic {
+  const pos = biomePosition(e);
   return toDiagnostic("biome", {
     severity:
       severityOverride ??
@@ -127,8 +159,8 @@ function biomeEntryToDiagnostic(
       workspaceRoot,
       typeof e.location?.path === "string" ? e.location.path : undefined,
     ),
-    line: e.location?.start?.line,
-    column: e.location?.start?.column,
+    line: pos.line,
+    column: pos.column,
     message: typeof e.message === "string" ? e.message : "finding",
   });
 }
@@ -141,15 +173,24 @@ async function runBiome(
   | { ok: false; result: ToolResult }
 > {
   const resolved = resolveBiomeBinary();
-  const execution = await ctx.run({
-    binary: resolved.binary,
-    args: [...resolved.prefixArgs, ...args],
-    cwd: ctx.workspaceRoot,
-    timeoutMs: 30_000,
-    // Biome JSON can be large for whole-workspace checks; raise the cap well
-    // above the 1 MiB default so large-but-valid results are not truncated.
-    maxOutputBytes: 10 * 1024 * 1024,
-  });
+  let execution;
+  try {
+    execution = await ctx.run({
+      binary: resolved.binary,
+      args: [...resolved.prefixArgs, ...args],
+      cwd: ctx.workspaceRoot,
+      timeoutMs: 30_000,
+      // Biome JSON can be large for whole-workspace checks; raise the cap well
+      // above the 1 MiB default so large-but-valid results are not truncated.
+      maxOutputBytes: 10 * 1024 * 1024,
+    });
+  } catch (err) {
+    // A rejecting runner must be normalized, never thrown out of execute.
+    return {
+      ok: false,
+      result: toolFailure(`biome runner threw: ${String(err)}`),
+    };
+  }
   if (execution.error?.code === "BinaryNotFound") {
     return { ok: false, result: binaryNotFound(resolved.binary) };
   }

@@ -48,6 +48,49 @@ describe("biome_check", () => {
     expect(d.severity).toMatch(/warning|error/);
   });
 
+  it("reports 1-based line numbers from the real binary", async () => {
+    // Verified against @biomejs/biome 2.5.8: lint diagnostics are already
+    // 1-based (a first-line finding reports line 1).
+    const result = await tool().execute({ paths: ["fixtures/sample.js"] }, ctx);
+    expect(result.ok).toBe(true);
+    const unused = (result.diagnostics ?? []).find(
+      (d) => d.rule?.includes("noUnusedVariables") && d.line === 1,
+    );
+    expect(unused).toBeDefined(); // `const unused = 42;` is on the first line
+  });
+
+  it("handles a span-based position shape (schema fallback)", async () => {
+    // Some biome reporter versions emit positions under `span` rather than
+    // `location.start`; positions must not silently become undefined.
+    const spanCtx: ToolContext = {
+      workspaceRoot,
+      run: async () => ({
+        exitCode: 1,
+        stdout: JSON.stringify({
+          summary: {},
+          diagnostics: [
+            {
+              severity: "warning",
+              message: "This variable x is unused.",
+              category: "lint/correctness/noUnusedVariables",
+              span: { start: { line: 1, column: 7 } },
+            },
+          ],
+          command: "check",
+        }),
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      }),
+    };
+    const result = await tool().execute({ paths: ["fixtures/sample.js"] }, spanCtx);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics?.[0]?.line).toBe(1);
+    expect(result.diagnostics?.[0]?.column).toBe(7);
+  });
+
   it("covers all fixture languages", async () => {
     for (const f of LANG_FILES) {
       const result = await tool().execute({ paths: [`fixtures/${f}`] }, ctx);
