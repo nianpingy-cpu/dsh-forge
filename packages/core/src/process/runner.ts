@@ -17,6 +17,12 @@ const KILL_ESCALATION_MS = 1000;
  * otherwise prevent the 'close' event from ever firing).
  */
 const DEADLINE_SLACK_MS = 2000;
+/**
+ * Auto-redaction only applies to env values at least this long. Short values
+ * ("1", "0", "true", "read") are common substrings and must never be
+ * globally replaced in captured output (that would corrupt the output).
+ */
+const MIN_SECRET_LENGTH = 8;
 
 export interface ExecutionRequest {
   /** Binary to execute. Absolute path recommended; must not be a shell line. */
@@ -179,11 +185,14 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
 
     // Env values are secrets by construction: if the child echoes them back,
     // the captured output must not leak them even when the caller forgets to
-    // list them in `redact`.
+    // list them in `redact`. Only values above MIN_SECRET_LENGTH are
+    // auto-redacted so short common values do not corrupt output.
     const autoRedact: string[] = [];
     if (env) {
       for (const value of Object.values(env)) {
-        if (typeof value === "string" && value.length > 0) autoRedact.push(value);
+        if (typeof value === "string" && value.length >= MIN_SECRET_LENGTH) {
+          autoRedact.push(value);
+        }
       }
     }
     const redactList = [...autoRedact, ...(redact ?? [])];
@@ -289,6 +298,15 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
           ? "BinaryNotFound"
           : "SpawnFailure";
       finish(null, { code, message: `binary '${binary}': ${err.message}` });
+    });
+
+    // Destroy the capture streams once the process has exited so the 'close'
+    // event cannot be held open by a descendant that inherited the pipes
+    // (e.g. a detached grandchild). Without this, runProcess could hang even
+    // after a clean exit when no timeout was configured.
+    child.on("exit", () => {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
     });
 
     child.on("close", (code) => {
