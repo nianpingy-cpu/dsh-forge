@@ -9,7 +9,6 @@
 import { CORE_VERSION } from "../index.js";
 import { runProcess } from "../process/runner.js";
 import {
-  validateArgs,
   type Plugin,
   type ToolContext,
   type ToolDefinition,
@@ -279,5 +278,8 @@ export async function runContractSuite(
   return { passed: checks.every((c) => c.passed), checks };
 }
 
-export { validateArgs };
 export type { Plugin, ToolDefinition, ToolResult, ToolContext };
+// Note: `validateArgs` is deliberately NOT re-exported here. index.ts already
+// exposes it via `export * from "./plugin/types.js"`; a second value
+// re-export from this module would create an ambiguous `export *` name in the
+// package namespace for consumers (bundlers / strict TS / native ESM).
