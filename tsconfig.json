@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -16,5 +16,5 @@
     "noEmit": true,
     "types": ["vitest/globals"]
   },
-  "include": ["tests/**/*.ts", "scripts/**/*.ts", "packages/*/src/**/*.ts", "packages/*/tests/**/*.ts", "vitest.config.ts", "eslint.config.js"]
+  "include": ["tests/**/*.ts", "packages/*/src/**/*.ts", "packages/*/tests/**/*.ts", "vitest.config.ts", "eslint.config.js"]
 }
