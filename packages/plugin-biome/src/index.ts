@@ -180,8 +180,17 @@ async function runBiome(
   if (execution.error) {
     return { ok: false, result: toolFailure(execution.error.message) };
   }
+  // A killed process (no exit code) must not be treated as success.
+  if (execution.exitCode === null) {
+    return {
+      ok: false,
+      result: toolFailure("biome terminated without an exit code"),
+    };
+  }
   // biome uses exit codes 0 (clean) and 1 (findings present); anything else
-  // is a real error.
+  // is a real error. Note: `format --write` uses exit 1 for errors too, so
+  // callers that apply writes must check exitCode themselves (see
+  // biome_format).
   if (execution.exitCode !== 0 && execution.exitCode !== 1) {
     const firstLine =
       execution.stderr.trim().split("\n")[0] ??
@@ -437,6 +446,36 @@ function verifyTargetFiles(
   return { ok: true, files };
 }
 
+/**
+ * Re-validate verified targets immediately before a write (TOCTOU guard).
+ * resolveInWorkspace canonicalizes the real path again, so a file swapped
+ * for a symlink pointing outside the workspace since the probe is rejected
+ * here, before biome touches it.
+ */
+function revalidateTargets(
+  workspaceRoot: string,
+  files: readonly string[],
+): { ok: true } | { ok: false; result: ToolResult } {
+  for (const f of files) {
+    try {
+      resolveInWorkspace(workspaceRoot, f);
+    } catch (err) {
+      if (err instanceof WorkspaceViolationError) {
+        return {
+          ok: false,
+          result: {
+            ok: false,
+            summary: "rewrite blocked: target no longer resolves inside the workspace",
+            error: { code: "WorkspaceViolation", message: err.message },
+          },
+        };
+      }
+      throw err;
+    }
+  }
+  return { ok: true };
+}
+
 const biomeFix: ToolDefinition = {
   name: "biome_fix",
   description:
@@ -477,6 +516,9 @@ const biomeFix: ToolDefinition = {
     if (verified.files.length === 0) {
       return { ok: true, summary: "no findings to fix", raw: "" };
     }
+    // TOCTOU guard: re-validate the real paths immediately before the write.
+    const revalidated = revalidateTargets(ctx.workspaceRoot, verified.files);
+    if (!revalidated.ok) return revalidated.result;
 
     const apply = await runBiome(ctx, [
       "check",
@@ -541,6 +583,9 @@ const biomeFormat: ToolDefinition = {
     if (verified.files.length === 0) {
       return { ok: true, summary: "all files formatted", raw: "" };
     }
+    // TOCTOU guard: re-validate the real paths immediately before the write.
+    const revalidated = revalidateTargets(ctx.workspaceRoot, verified.files);
+    if (!revalidated.ok) return revalidated.result;
 
     const apply = await runBiome(ctx, [
       "format",
@@ -548,6 +593,13 @@ const biomeFormat: ToolDefinition = {
       ...verified.files,
     ]);
     if (!apply.ok) return apply.result;
+    // `format --write` uses exit 1 for real errors (e.g. unparseable files),
+    // not 'findings present'; surface it as a failure, never 'formatted'.
+    if (apply.exitCode === 1) {
+      return toolFailure(
+        apply.stderr.trim().split("\n")[0] || "biome format failed",
+      );
+    }
     const summary = apply.stdout.trim() || "formatted";
     return {
       ok: true,

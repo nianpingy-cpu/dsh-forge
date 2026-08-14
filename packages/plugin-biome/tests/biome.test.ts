@@ -304,6 +304,32 @@ describe("biome_fix", () => {
     expect(result.error?.code).toBe("WorkspaceViolation");
     expect(applied).toBe(false);
   });
+
+  it("never writes through a symlink escaping the workspace", async () => {
+    // End-to-end guard (exercised on symlink-capable OSes; Windows without
+    // admin/Developer Mode skips). Whether biome skips the symlink (no
+    // changes) or we block it, the outside target must never be modified.
+    const { symlinkSync, rmSync } = await import("node:fs");
+    const escapeDir = join(workspaceRoot, "escape-symlink");
+    mkdirSync(escapeDir, { recursive: true });
+    const outsideDir = join(workspaceRoot, "..", `outside-target-${Date.now()}`);
+    mkdirSync(outsideDir, { recursive: true });
+    const secret = join(outsideDir, "secret.ts");
+    writeFileSync(secret, "const unused: number = 1;\n");
+    try {
+      symlinkSync(secret, join(escapeDir, "link.ts"));
+    } catch {
+      rmSync(outsideDir, { recursive: true, force: true });
+      return; // cannot create symlinks here; skip
+    }
+    const result = await tool().execute(
+      { paths: ["escape-symlink"] },
+      approvedCtx(),
+    );
+    expect(readFileSync(secret, "utf8")).toBe("const unused: number = 1;\n");
+    rmSync(outsideDir, { recursive: true, force: true });
+    void result;
+  });
 });
 
 describe("biome_format", () => {
@@ -339,6 +365,72 @@ describe("biome_format", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("PermissionDenied");
+  });
+
+  it("surfaces a format --write failure (exit 1) as a tool failure", async () => {
+    // `format --write` exits 1 on real errors (unparseable files), not
+    // 'findings present'; must never be reported as 'formatted'.
+    const target = join(workspaceRoot, "fixtures", "unformatted.ts");
+    const mockCtx: ToolContext = {
+      workspaceRoot,
+      permission: { approved: true },
+      run: async (req) => {
+        if (req.args.includes("--reporter=json")) {
+          return {
+            exitCode: 1,
+            stdout: JSON.stringify({
+              summary: {},
+              diagnostics: [
+                { severity: "error", message: "would print", category: "format", location: { path: target, start: { line: 0, column: 0 } } },
+              ],
+              command: "format",
+            }),
+            stderr: "",
+            timedOut: false,
+            aborted: false,
+            truncated: false,
+            durationMs: 1,
+          };
+        }
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: "ERROR: could not parse file",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 1,
+        };
+      },
+    };
+    const result = await tool().execute(
+      { paths: ["fixtures/unformatted.ts"] },
+      mockCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
+  });
+
+  it("treats a killed process as a tool failure", async () => {
+    const killedCtx: ToolContext = {
+      workspaceRoot,
+      permission: { approved: true },
+      run: async () => ({
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 100,
+      }),
+    };
+    const result = await tool().execute(
+      { paths: ["fixtures/unformatted.ts"] },
+      killedCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
   });
 
   it("blocks format when a matched file escapes the workspace (symlink escape)", async () => {
