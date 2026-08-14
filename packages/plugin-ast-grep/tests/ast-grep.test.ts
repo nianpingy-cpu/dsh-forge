@@ -228,6 +228,13 @@ describe("ast_rule_test", () => {
 describe("ast_rewrite", () => {
   const rewriteTool = () =>
     astGrepPlugin.tools.find((t) => t.name === "ast_rewrite")!;
+  // apply mutates files, so it must run under an approved permission context.
+  // Built lazily (factory) because workspaceRoot is only assigned in beforeAll.
+  const approvedCtx = (): ToolContext => ({
+    workspaceRoot,
+    run: runProcess,
+    permission: { approved: true },
+  });
 
   it("previews rewrites without modifying files", async () => {
     const file = join(workspaceRoot, "fixtures", "sample.js");
@@ -260,11 +267,42 @@ describe("ast_rewrite", () => {
         language: "js",
         paths: ["rewrite-fixtures/target.js"],
       },
-      ctx,
+      approvedCtx(),
     );
     expect(result.ok).toBe(true);
     expect(readFileSync(file, "utf8")).toContain("console.info");
     expect(readFileSync(file, "utf8")).not.toContain("console.log");
+  });
+
+  it("denies apply without permission approval", async () => {
+    const deniedCtx: ToolContext = { workspaceRoot, run: runProcess, permission: { approved: false } };
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: ["rewrite-fixtures/target.js"],
+      },
+      deniedCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("PermissionDenied");
+  });
+
+  it("rejects an empty paths array (no whole-workspace rewrite)", async () => {
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: [],
+      },
+      approvedCtx(),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
   });
 
   it("rejects paths outside the workspace", async () => {
@@ -325,7 +363,7 @@ describe("ast_rewrite", () => {
         language: "js",
         paths: ["rewrite-multi/a.js", "rewrite-multi/b.js"],
       },
-      ctx,
+      approvedCtx(),
     );
     expect(result.ok).toBe(true);
     expect(readFileSync(join(dir, "a.js"), "utf8")).not.toContain("tick()");
@@ -352,6 +390,9 @@ describe("ast_rewrite", () => {
   });
 
   it("handles Windows-style backslash paths", async () => {
+    // Backslash normalization is win32-only by design; on POSIX '\' is a
+    // literal filename character, so this is gated to Windows.
+    if (process.platform !== "win32") return;
     const result = await rewriteTool().execute(
       {
         mode: "preview",

@@ -2,13 +2,19 @@
  * Plugin and tool contracts (ISSUE-007, docs/PLUGIN_STANDARD.md).
  */
 import type { Diagnostic, ResultSummary } from "../diagnostics/types.js";
-import type { MutationClass } from "../workspace/policy.js";
+import type { MutationClass, PermissionContext } from "../workspace/policy.js";
 import type { ExecutionRequest, ExecutionResult } from "../process/runner.js";
 
 export interface ToolContext {
   workspaceRoot: string;
   /** Core process runner — plugins must execute binaries through this. */
   run: (request: ExecutionRequest) => Promise<ExecutionResult>;
+  /**
+   * Permission state provided by the DSH host. Mutating tools (mutationClass
+   * workspace-write and above) must gate side effects on this; absent or
+   * unapproved means the mutation is denied (PermissionDenied).
+   */
+  permission?: PermissionContext;
 }
 
 export interface ToolError {
@@ -44,6 +50,8 @@ export interface InputSchema {
       description?: string;
       enum?: readonly string[];
       items?: { type: string };
+      /** For array properties: minimum number of elements. */
+      minItems?: number;
     }
   >;
   required?: readonly string[];
@@ -105,6 +113,17 @@ export function validateArgs(
       return {
         ok: false,
         error: `field ${key} must be one of: ${spec.enum.join(", ")}`,
+      };
+    }
+    if (
+      spec.type === "array" &&
+      spec.minItems !== undefined &&
+      Array.isArray(value) &&
+      value.length < spec.minItems
+    ) {
+      return {
+        ok: false,
+        error: `field ${key} must contain at least ${spec.minItems} item(s)`,
       };
     }
   }

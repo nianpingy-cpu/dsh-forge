@@ -11,6 +11,7 @@ import {
   summarizeDiagnostics,
   resolveInWorkspace,
   WorkspaceViolationError,
+  assertPermission,
   type ToolDefinition,
   type ToolResult,
   type ToolContext,
@@ -455,7 +456,8 @@ const astRewrite: ToolDefinition = {
       paths: {
         type: "array",
         items: { type: "string" },
-        description: "workspace-relative files/directories to rewrite",
+        minItems: 1,
+        description: "workspace-relative files/directories to rewrite (at least one; empty is rejected to prevent whole-workspace rewrites)",
       },
     },
     required: ["mode", "pattern", "replacement", "language", "paths"],
@@ -472,6 +474,29 @@ const astRewrite: ToolDefinition = {
     };
     if (mode !== "preview" && mode !== "apply") {
       return invalid("mode must be 'preview' or 'apply'");
+    }
+    // Explicit empty-path guard: with no path args, `sg run --update-all`
+    // would scan the workspace root recursively and rewrite everything.
+    if (!Array.isArray(paths) || paths.length === 0) {
+      return invalid(
+        "paths must contain at least one workspace-relative file or directory",
+      );
+    }
+
+    if (mode === "apply") {
+      // P0: apply is a workspace-write mutation and requires approval.
+      // An absent/unapproved permission context denies the mutation.
+      if (!assertPermission("workspace-write", ctx.permission ?? { approved: false })) {
+        return {
+          ok: false,
+          summary: "permission denied",
+          error: {
+            code: "PermissionDenied",
+            message:
+              "ast_rewrite apply requires workspace-write permission approval (mode 'preview' does not write)",
+          },
+        };
+      }
     }
 
     const safe = safePaths(ctx.workspaceRoot, paths);
