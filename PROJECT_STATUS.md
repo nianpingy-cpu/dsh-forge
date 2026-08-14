@@ -4,19 +4,19 @@ Current Version: 0.0.0 (pre-release)
 Current Milestone: V0.1.0
 Current Issue: ISSUE-001 (Bootstrap repository)
 Current Branch: V0.1.0/issue-001-bootstrap-repository
-Current PR: (pending)
+Current PR: #31 (ISSUE-001: Bootstrap repository → release/v0.1.0)
 
 Completed Issues: (none)
 
 Open Issues: ISSUE-001 .. ISSUE-030
 
-Blocked: (none)
+Blocked: PR #31 merge gate — external model review pending (no reviewer API configured yet; pipeline arrives in ISSUE-008)
 
-Latest CI: (pending first PR)
+Latest CI: PASS (PR #31, ubuntu-latest + windows-latest, 2026-08-14)
 
 Latest External Review: (pipeline not yet implemented — ISSUE-008)
 
-Next Action: Complete ISSUE-001 TDD loop (RED → GREEN), open PR #1, run CI.
+Next Action: Obtain external reviewer configuration, complete review of PR #31, merge, proceed to ISSUE-002.
 
 ## Branch strategy note
 
