@@ -26,7 +26,7 @@ const noShellExecRule = {
     const SHELL_OPTIONAL = new Set(["spawn", "spawnSync", "execFile", "execFileSync"]);
     const ALWAYS_SHELL = new Set(["exec", "execSync"]);
     /**
-     * @param {import("@typescript-eslint/utils").TSESTree.CallExpression} call
+     * @param {import("eslint").AST.ESTree.CallExpression} call
      */
     function check(call) {
       if (call.callee.type !== "Identifier") return;
