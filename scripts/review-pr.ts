@@ -14,6 +14,8 @@ export interface ReviewInput {
   headCommit: string;
   /** Commit history between base and head, newest-first: "shortsha subject". */
   commits: string[];
+  /** Key repository deliverable files present at HEAD (e.g. LICENSE, README). */
+  repoDeliverables: string[];
   diff: string;
   changedFiles: string[];
   testSummary: string;
@@ -124,6 +126,11 @@ export function buildReviewPrompt(input: ReviewInput, focus: ReviewFocus): strin
     "",
     "## Changed files",
     input.changedFiles.join("\n"),
+    "",
+    "## Repository deliverables present at HEAD",
+    input.repoDeliverables.length > 0
+      ? input.repoDeliverables.join("\n")
+      : "(none reported)",
     "",
     "## Test results",
     input.testSummary,

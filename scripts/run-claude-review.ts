@@ -14,7 +14,7 @@
  * Usage: npx tsx scripts/run-claude-review.ts --pr 31
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildReviewPrompt,
@@ -79,12 +79,30 @@ function gatherInput(pr: number): ReviewInput {
     readFileSync("compatibility/deepseek-harness.json", "utf8"),
   );
 
+  // Key deliverables that may exist in the base (so the reviewer can tell a
+  // missing file apart from a file present outside the PR diff).
+  const KEY_DELIVERABLES = [
+    "LICENSE",
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "AGENTS.md",
+    "package.json",
+    "pnpm-workspace.yaml",
+    "tsconfig.json",
+    "PROJECT_STATUS.md",
+  ];
+  const repoDeliverables = KEY_DELIVERABLES.filter((f) => existsSync(f)).map(
+    (f) => `present: ${f}`,
+  );
+
   return {
     prNumber: pr,
     issue,
     baseCommit: prJson.baseRefOid,
     headCommit: prJson.headRefOid,
     commits,
+    repoDeliverables,
     diff: diff.slice(0, 60_000),
     changedFiles,
     testSummary:

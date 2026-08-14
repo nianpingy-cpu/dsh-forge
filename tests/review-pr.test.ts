@@ -33,6 +33,7 @@ function makeInput(): ReviewInput {
       "ac055f2 test(core): add failing smoke test for core package (#1)",
       "f65f96a feat(core): bootstrap minimal core package (#1)",
     ],
+    repoDeliverables: ["present: LICENSE", "present: README.md"],
     diff: "+ function runProcess() {}",
     changedFiles: ["packages/core/src/process/runner.ts"],
     testSummary: "26/26 passed, typecheck clean",
@@ -58,6 +59,12 @@ describe("buildReviewPrompt", () => {
     const prompt = buildReviewPrompt(makeInput(), "correctness-security");
     expect(prompt).toContain("ac055f2 test(core): add failing smoke test");
     expect(prompt).toContain("f65f96a feat(core): bootstrap minimal core package");
+  });
+
+  it("includes repository deliverables present at HEAD", () => {
+    const prompt = buildReviewPrompt(makeInput(), "correctness-security");
+    expect(prompt).toContain("present: LICENSE");
+    expect(prompt).toContain("present: README.md");
   });
 
   it("embeds the reviewer focus prompt", () => {
