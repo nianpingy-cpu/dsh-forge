@@ -18,7 +18,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "build": "pnpm -r run build",
-    "clean": "pnpm -r exec rimraf dist coverage || true"
+    "clean": "pnpm -r exec rimraf dist coverage || true",
+    "review:pr": "node scripts/review-pr.ts"
   },
   "devDependencies": {
     "@dsh-forge/core": "workspace:*",
