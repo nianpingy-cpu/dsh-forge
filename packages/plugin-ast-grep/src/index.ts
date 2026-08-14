@@ -145,8 +145,15 @@ async function runSg(
     const head = execution.stdout.trimStart()[0];
     if (head !== "[" && head !== "{") {
       // In apply mode (`--update-all`, no --json) a no-match run exits 1 with
-      // empty stdout. That is a legitimate no-op, not a failure.
-      if (opts.noMatchIsOk && execution.exitCode === 1 && execution.stdout.trim() === "") {
+      // BOTH stdout and stderr empty. A non-empty stderr means a real failure
+      // (e.g. unreadable target, bad pattern) and must not be masked as a
+      // no-op.
+      if (
+        opts.noMatchIsOk &&
+        execution.exitCode === 1 &&
+        execution.stdout.trim() === "" &&
+        execution.stderr.trim() === ""
+      ) {
         return { ok: true, stdout: execution.stdout, stderr: execution.stderr, exitCode: execution.exitCode };
       }
       const firstLine =

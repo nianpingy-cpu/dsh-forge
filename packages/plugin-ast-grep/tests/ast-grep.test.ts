@@ -310,6 +310,23 @@ describe("ast_rewrite", () => {
     expect(readFileSync(file, "utf8")).toBe("tick();\ntock();");
   });
 
+  it("apply with a failing target is not masked as a no-op", async () => {
+    // sg exits 1 with empty stdout AND a non-empty stderr (ERROR: ...) when
+    // a target cannot be read; this must surface as a failure, not '0 changes'.
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "tick()",
+        replacement: "tock()",
+        language: "js",
+        paths: ["rewrite-nomatch/does-not-exist.js"],
+      },
+      approvedCtx(),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
+  });
+
   it("rejects an empty paths array (no whole-workspace rewrite)", async () => {
     const result = await rewriteTool().execute(
       {
