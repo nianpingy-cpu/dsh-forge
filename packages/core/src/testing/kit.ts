@@ -131,6 +131,10 @@ export async function runContractSuite(
 
   for (const tool of plugin.tools) {
     const spec = options.toolArgs[tool.name];
+    // The designated binary probe's contract is to return BinaryNotFound, so
+    // it is exempt from the "valid args succeed" execution checks (it is
+    // exercised by check 9 instead).
+    const isBinaryProbe = tool.name === options.missingBinaryTool;
 
     // 4. schema valid
     const schemaOk =
@@ -164,38 +168,45 @@ export async function runContractSuite(
       continue;
     }
 
-    // 6. typed args accepted, canonical result
-    try {
-      const validResult = await tool.execute(spec.valid, ctx);
-      checks.push(
-        check(
-          `typed args accepted: ${tool.name}`,
-          isCanonicalResult(validResult),
-        ),
-      );
-      checks.push(
-        check(
-          `canonical result: ${tool.name}`,
-          isCanonicalResult(validResult) &&
-            (validResult.ok || validResult.error !== undefined),
-        ),
-      );
-      // 7. model-facing render
-      const rendered = renderModelFacing(validResult);
-      checks.push(
-        check(
-          `model-facing render: ${tool.name}`,
-          typeof rendered === "string" && rendered.length > 0,
-        ),
-      );
-    } catch (err) {
-      checks.push(
-        check(
-          `typed args accepted: ${tool.name}`,
-          false,
-          `threw: ${String(err)}`,
-        ),
-      );
+    // 6. typed args accepted: the tool must actually succeed (ok:true) on a
+    //    valid invocation. A stub that always returns a normalized failure
+    //    for valid args is a non-functional tool and must not pass.
+    if (!isBinaryProbe) {
+      try {
+        const validResult = await tool.execute(spec.valid, ctx);
+        const accepted =
+          isCanonicalResult(validResult) && validResult.ok === true;
+        checks.push(
+          check(
+            `typed args accepted: ${tool.name}`,
+            accepted,
+            `got ok=${String(validResult.ok)}, error=${String(validResult.error?.code)}`,
+          ),
+        );
+        checks.push(
+          check(
+            `canonical result: ${tool.name}`,
+            isCanonicalResult(validResult) &&
+              (validResult.ok || validResult.error !== undefined),
+          ),
+        );
+        // 7. model-facing render
+        const rendered = renderModelFacing(validResult);
+        checks.push(
+          check(
+            `model-facing render: ${tool.name}`,
+            typeof rendered === "string" && rendered.length > 0,
+          ),
+        );
+      } catch (err) {
+        checks.push(
+          check(
+            `typed args accepted: ${tool.name}`,
+            false,
+            `threw: ${String(err)}`,
+          ),
+        );
+      }
     }
 
     // 8. invalid args rejected with InvalidArguments
