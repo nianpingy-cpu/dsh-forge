@@ -404,6 +404,24 @@ describe("contract suite", () => {
           },
           invalid: { rule: "" },
         },
+        ast_rewrite: {
+          // preview is read-only and safe for the contract suite's valid-args
+          // execution against the real runner.
+          valid: {
+            mode: "preview",
+            pattern: "foo($X)",
+            replacement: "bar($X)",
+            language: "ts",
+            paths: ["fixtures/sample.ts"],
+          },
+          invalid: {
+            mode: "preview",
+            pattern: 42,
+            replacement: "x",
+            language: "ts",
+            paths: ["fixtures/sample.ts"],
+          },
+        },
       },
     });
     if (!report.passed) {

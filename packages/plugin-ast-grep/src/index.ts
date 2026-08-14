@@ -425,15 +425,164 @@ const astRuleTest: ToolDefinition = {
   },
 };
 
+// -------------------------------------------------------------- ast_rewrite
+
+/**
+ * ast_rewrite (ISSUE-010): AST rewrite with preview/apply modes.
+ *
+ * workspace-write mutation. Preview runs `sg run --rewrite --json` which
+ * reports each change (including the replacement text) WITHOUT writing; apply
+ * runs `sg run --rewrite --update-all` which rewrites files in place. All
+ * paths are resolved through the workspace boundary check, and the mutation
+ * class requires permission approval before apply.
+ */
+const astRewrite: ToolDefinition = {
+  name: "ast_rewrite",
+  description:
+    "Rewrite code matched by an AST pattern (workspace-write). mode 'preview' returns the changes without writing; mode 'apply' writes them in place (requires permission approval).",
+  mutationClass: "workspace-write",
+  inputSchema: {
+    type: "object",
+    properties: {
+      mode: {
+        type: "string",
+        enum: ["preview", "apply"],
+        description: "preview (no write) or apply (write)",
+      },
+      pattern: { type: "string", description: "AST pattern, e.g. console.log($X)" },
+      replacement: { type: "string", description: "replacement template, e.g. console.info($X)" },
+      language: { type: "string", enum: LANGUAGES, description: "target language" },
+      paths: {
+        type: "array",
+        items: { type: "string" },
+        description: "workspace-relative files/directories to rewrite",
+      },
+    },
+    required: ["mode", "pattern", "replacement", "language", "paths"],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    const { mode, pattern, replacement, language, paths } = validated.value as {
+      mode: string;
+      pattern: string;
+      replacement: string;
+      language: string;
+      paths: string[];
+    };
+    if (mode !== "preview" && mode !== "apply") {
+      return invalid("mode must be 'preview' or 'apply'");
+    }
+
+    const safe = safePaths(ctx.workspaceRoot, paths);
+    if (!safe.ok) return safe.result;
+
+    if (mode === "preview") {
+      // `--json` reports matches (with the replacement text) without writing.
+      const run = await runSg(ctx, [
+        "run",
+        "-p",
+        pattern,
+        "-r",
+        replacement,
+        "-l",
+        language,
+        "--json=pretty",
+        ...safe.absolute,
+      ]);
+      if (!run.ok) return run.result;
+      if (/ERROR node/i.test(run.stderr)) {
+        return {
+          ok: false,
+          summary: "invalid AST pattern",
+          error: {
+            code: "ToolFailure",
+            message: "ast-grep parsed the pattern with an ERROR node; pattern is not a valid AST pattern",
+          },
+        };
+      }
+      const parsed = parseJsonOutput("ast-grep", run.stdout);
+      if (!parsed.ok) {
+        return {
+          ok: false,
+          summary: "ast-grep produced malformed output",
+          error: { code: "ParseFailure", message: parsed.error },
+        };
+      }
+      const matches = Array.isArray(parsed.value)
+        ? (parsed.value as Record<string, unknown>[])
+        : [];
+      const changes = matches.map((m) => ({
+        file: toRelativeFile(
+          ctx.workspaceRoot,
+          typeof m.file === "string" ? m.file : undefined,
+        ),
+        oldText: typeof m.text === "string" ? m.text : undefined,
+        newText: typeof m.replacement === "string" ? m.replacement : undefined,
+      }));
+      return {
+        ok: true,
+        summary: `${changes.length} change${changes.length === 1 ? "" : "s"} (preview, not written)`,
+        diagnostics: changes.slice(0, 200).map((c) =>
+          toDiagnostic("ast-grep", {
+            severity: "info",
+            rule: "ast_rewrite",
+            file: c.file,
+            message: c.newText
+              ? `replace ${JSON.stringify(c.oldText)} with ${JSON.stringify(c.newText)}`
+              : "rewrite change",
+          }),
+        ),
+        raw:
+          run.stdout.length > 20_000
+            ? run.stdout.slice(0, 20_000) + "\n...[truncated]"
+            : run.stdout,
+      };
+    }
+
+    // apply: `--update-all` rewrites the matched files in place.
+    const run = await runSg(ctx, [
+      "run",
+      "-p",
+      pattern,
+      "-r",
+      replacement,
+      "-l",
+      language,
+      "--update-all",
+      ...safe.absolute,
+    ]);
+    if (!run.ok) return run.result;
+    if (/ERROR node/i.test(run.stderr)) {
+      return {
+        ok: false,
+        summary: "invalid AST pattern",
+        error: {
+          code: "ToolFailure",
+          message: "ast-grep parsed the pattern with an ERROR node; pattern is not a valid AST pattern",
+        },
+      };
+    }
+    return {
+      ok: true,
+      summary: `rewrite applied to ${safe.absolute.length} path(s) (workspace-write)`,
+      raw:
+        run.stdout.length > 20_000
+          ? run.stdout.slice(0, 20_000) + "\n...[truncated]"
+          : run.stdout,
+    };
+  },
+};
+
 export const astGrepPlugin = {
   metadata: {
     name: "@dsh-forge/plugin-ast-grep",
     version: "0.1.0",
     upstreamTool: "ast-grep",
     coreContractVersion: "0.1.0",
-    capabilities: ["ast-search:js", "ast-search:ts", "ast-search:py", "scan", "inspect", "rule-test"],
+    capabilities: ["ast-search:js", "ast-search:ts", "ast-search:py", "scan", "inspect", "rule-test", "rewrite"],
   },
-  tools: [astSearch, astInspect, astScan, astRuleTest],
+  tools: [astSearch, astInspect, astScan, astRuleTest, astRewrite],
 };
 
 export { resolveSgBinary };
