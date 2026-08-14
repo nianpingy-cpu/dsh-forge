@@ -25,7 +25,7 @@ const noShellExecRule = {
   create(context) {
     const SHELL_OPTIONAL = new Set(["spawn", "spawnSync", "execFile", "execFileSync"]);
     const ALWAYS_SHELL = new Set(["exec", "execSync"]);
-    /** @param {import("estree").CallExpression} call */
+    /** @param {import("eslint").Rule.Node} call */
     function check(call) {
       if (call.callee.type !== "Identifier") return;
       const name = call.callee.name;
