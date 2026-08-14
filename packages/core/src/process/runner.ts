@@ -31,6 +31,12 @@ const CLOSE_GRACE_MS = 3000;
  * globally replaced in captured output (that would corrupt the output).
  */
 const MIN_SECRET_LENGTH = 8;
+/**
+ * Env keys whose values are treated as secrets for auto-redaction. Keyed by
+ * name (not value) so common non-secret config values like NODE_ENV are never
+ * rewritten, which would silently corrupt structured output.
+ */
+const SENSITIVE_ENV_KEY = /(token|secret|password|passwd|credential|authorization|api[_-]?key|deepseek)/i;
 
 export interface ExecutionRequest {
   /** Binary to execute. Absolute path recommended; must not be a shell line. */
@@ -49,6 +55,12 @@ export interface ExecutionRequest {
   maxOutputBytes?: number;
   /** Secret values redacted from captured stdout/stderr. */
   redact?: readonly string[];
+  /**
+   * Whether env values under sensitive key names are auto-redacted from
+   * captured output. Default true. Disable only when the caller explicitly
+   * manages redaction.
+   */
+  autoRedact?: boolean;
 }
 
 export interface ExecutionError {
@@ -180,6 +192,7 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
     signal,
     maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
     redact,
+    autoRedact: autoRedactEnabled = true,
   } = request;
 
   return new Promise((resolve) => {
@@ -191,15 +204,22 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
     let aborted = false;
     let settled = false;
 
-    // Env values are secrets by construction: if the child echoes them back,
-    // the captured output must not leak them even when the caller forgets to
-    // list them in `redact`. Only values above MIN_SECRET_LENGTH are
-    // auto-redacted so short common values do not corrupt output.
+    // Env values under sensitive key names are secrets by construction: if the
+    // child echoes them back, the captured output must not leak them even when
+    // the caller forgets to list them in `redact`. Only long-enough values
+    // under sensitive key names are auto-redacted so common config values
+    // (NODE_ENV, FORCE_COLOR, ...) never corrupt legitimate output.
     const autoRedact: string[] = [];
-    if (env) {
-      for (const value of Object.values(env)) {
-        if (typeof value === "string" && value.length >= MIN_SECRET_LENGTH) {
-          autoRedact.push(value);
+    if (autoRedactEnabled) {
+      if (env) {
+        for (const [key, value] of Object.entries(env)) {
+          if (
+            SENSITIVE_ENV_KEY.test(key) &&
+            typeof value === "string" &&
+            value.length >= MIN_SECRET_LENGTH
+          ) {
+            autoRedact.push(value);
+          }
         }
       }
     }
