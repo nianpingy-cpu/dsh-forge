@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { main, readManifest, validateManifest } from "../scripts/verify-upstream.js";
+import {
+  checkReachability,
+  main,
+  readManifest,
+  validateManifest,
+} from "../scripts/verify-upstream.js";
 
 const validManifest = {
   repository: "deepseek-ai/deepseek-harness",
@@ -102,10 +107,60 @@ describe("validateManifest", () => {
     const manifestPath = fileURLToPath(
       new URL("../compatibility/deepseek-harness.json", import.meta.url),
     );
-    expect(main(manifestPath)).toBe(0);
+    // Inject a fake exec so the test never hits the network; it reports the
+    // pinned commit as reachable.
+    expect(
+      main(manifestPath, {
+        exec: () =>
+          "47f943859bef60e4160492346772ded9b24f765a\trefs/heads/master\n",
+      }),
+    ).toBe(0);
+  });
+
+  it("main exits 1 when the pinned SHA is not reachable upstream", () => {
+    const manifestPath = fileURLToPath(
+      new URL("../compatibility/deepseek-harness.json", import.meta.url),
+    );
+    // A fabricated SHA must be rejected at execution time, not just format.
+    expect(main(manifestPath, { exec: () => "" })).toBe(1);
   });
 
   it("main exits 1 for a missing manifest", () => {
     expect(main(join(tmpdir(), "no-such-manifest.json"))).toBe(1);
+  });
+});
+
+describe("checkReachability", () => {
+  const SHA = "47f943859bef60e4160492346772ded9b24f765a";
+  it("reports reachable when ls-remote lists the commit on the branch", () => {
+    const result = checkReachability(
+      "deepseek-ai/deepseek-harness",
+      "master",
+      SHA,
+      () => `${SHA}\trefs/heads/master\n`,
+    );
+    expect(result.reachable).toBe(true);
+  });
+
+  it("reports unreachable when the commit is absent", () => {
+    const result = checkReachability(
+      "deepseek-ai/deepseek-harness",
+      "master",
+      SHA,
+      () => "",
+    );
+    expect(result.reachable).toBe(false);
+  });
+
+  it("reports unreachable when ls-remote fails", () => {
+    const result = checkReachability(
+      "deepseek-ai/deepseek-harness",
+      "master",
+      SHA,
+      () => {
+        throw new Error("network down");
+      },
+    );
+    expect(result.reachable).toBe(false);
   });
 });

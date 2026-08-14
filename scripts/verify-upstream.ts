@@ -7,6 +7,7 @@
  * any integration code is touched.
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -121,12 +122,61 @@ export function formatResult(
   return `INVALID: ${manifestPath}\n  - ${result.errors.join("\n  - ")}`;
 }
 
+export interface ReachabilityResult {
+  reachable: boolean;
+  detail: string;
+}
+
 /**
- * Runnable entry point. Validates the manifest and prints the pinned SHA;
- * exits 0 when valid, 1 when invalid. Defaults to the repo manifest, so CI
- * can enforce the compatibility lock: `node scripts/verify-upstream.ts`.
+ * Re-verify the pinned SHA at execution time: `git ls-remote` against the
+ * recorded upstream repository/branch (fixed arguments, no shell, consistent
+ * with ADR-004). A fabricated 40-hex SHA is rejected because it is not
+ * reachable. The exec is injectable for tests.
  */
-export function main(manifestPath = "compatibility/deepseek-harness.json"): number {
+export function checkReachability(
+  repository: string,
+  branch: string,
+  commit: string,
+  exec: (cmd: string, args: string[]) => string = (cmd, args) =>
+    execFileSync(cmd, args, {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      shell: false,
+    }),
+): ReachabilityResult {
+  try {
+    const out = exec("git", [
+      "ls-remote",
+      `https://github.com/${repository}.git`,
+      branch,
+    ]);
+    if (out.includes(commit)) {
+      return {
+        reachable: true,
+        detail: `pinned commit ${commit} is reachable on ${repository}@${branch}`,
+      };
+    }
+    return {
+      reachable: false,
+      detail: `pinned commit ${commit} was NOT found on ${repository}@${branch} (git ls-remote)`,
+    };
+  } catch (err) {
+    return {
+      reachable: false,
+      detail: `git ls-remote failed for ${repository}: ${String(err)}`,
+    };
+  }
+}
+
+/**
+ * Runnable entry point. Validates the manifest locally and re-verifies the
+ * pinned SHA against the upstream repository; prints the pinned SHA and exits
+ * 0 when valid+reachable, 1 otherwise. CI: `node scripts/verify-upstream.ts`.
+ */
+export function main(
+  manifestPath = "compatibility/deepseek-harness.json",
+  options: { exec?: (cmd: string, args: string[]) => string } = {},
+): number {
   const result = readManifest(manifestPath);
   if (!result.valid) {
     console.error(formatResult(manifestPath, result));
@@ -134,18 +184,27 @@ export function main(manifestPath = "compatibility/deepseek-harness.json"): numb
   }
   let commit = "(unknown)";
   let branch = "";
+  let repository = "";
   try {
     const raw = JSON.parse(readFileSync(manifestPath, "utf8")) as {
       commit?: string;
       branch?: string;
+      repository?: string;
     };
     commit = raw.commit ?? "(missing)";
     branch = raw.branch ?? "";
+    repository = raw.repository ?? "";
   } catch {
     // readManifest already validated; keep fallback values
   }
   console.log("OK: compatibility manifest is valid");
   console.log(`Pinned DeepSeek Harness commit: ${commit} (${branch})`);
+  const reachability = checkReachability(repository, branch, commit, options.exec);
+  if (!reachability.reachable) {
+    console.error(`REJECTED: ${reachability.detail}`);
+    return 1;
+  }
+  console.log(reachability.detail);
   return 0;
 }
 
