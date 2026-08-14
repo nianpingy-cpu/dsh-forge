@@ -175,6 +175,9 @@ describe("runProcess", () => {
   it("kills grandchild processes on timeout (process tree)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "dsh-tree-"));
     const pidFile = join(dir, "grandchild.pid");
+    // Parent boots, spawns a grandchild that records its pid and sleeps, then
+    // the parent sleeps. A generous timeout lets both come alive before the
+    // tree-kill fires.
     const parentScript = `
       const { spawn } = require("node:child_process");
       const fs = require("node:fs");
@@ -186,30 +189,77 @@ describe("runProcess", () => {
       setTimeout(() => {}, 60000);
     `;
     try {
-      await runProcess({ binary: NODE, args: ["-e", parentScript], timeoutMs: 0 });
-      // wait for the grandchild to record its pid
-      const deadline = Date.now() + 5000;
-      while (!existsSync(pidFile) && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 100));
-      }
+      const result = await runProcess({
+        binary: NODE,
+        args: ["-e", parentScript],
+        timeoutMs: 3000,
+      });
+      expect(result.timedOut).toBe(true);
+
+      // grandchild recorded its pid while the tree was alive
       expect(existsSync(pidFile)).toBe(true);
       const grandchildPid = Number(readFileSync(pidFile, "utf8"));
       expect(Number.isFinite(grandchildPid)).toBe(true);
 
-      // Now run a timeout that should kill the whole tree (parent + grandchild).
-      const result = await runProcess({
-        binary: NODE,
-        args: ["-e", parentScript],
-        timeoutMs: 300,
-      });
-      expect(result.timedOut).toBe(true);
-
-      // grandchild must be gone shortly after
+      // grandchild must be gone shortly after the tree-kill
       const gone = await waitUntilNotAlive(grandchildPid, 5000);
       expect(gone).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("force-resolves even when a detached descendant holds the capture pipes", async () => {
+    // A descendant detached into its own process group that inherits stdout
+    // keeps the pipe open, so 'close' never fires on the parent. The runner
+    // must resolve via an overall deadline instead of hanging forever.
+    const dir = mkdtempSync(join(tmpdir(), "dsh-deadline-"));
+    const script = `
+      const { spawn } = require("node:child_process");
+      const c = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
+        stdio: "inherit",
+        detached: true,
+      });
+      c.unref();
+      setTimeout(() => {}, 60000);
+    `;
+    try {
+      const startedAt = Date.now();
+      const result = await runProcess({
+        binary: NODE,
+        args: ["-e", script],
+        timeoutMs: 400,
+      });
+      const elapsed = Date.now() - startedAt;
+      expect(result.timedOut).toBe(true);
+      // resolved well before the 60s hang (timeout + grace + slack)
+      expect(elapsed).toBeLessThan(15000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("auto-redacts explicit env values from captured output", async () => {
+    const result = await runProcess({
+      binary: NODE,
+      args: [
+        "-e",
+        "console.log('echo:' + (process.env.DSH_TEST_ENV_SECRET ?? 'missing'))",
+      ],
+      env: { DSH_TEST_ENV_SECRET: "env-super-secret-value" },
+    });
+    expect(result.stdout).not.toContain("env-super-secret-value");
+    expect(result.stdout).toContain("[REDACTED]");
+  });
+
+  it("does not leave an open stdin pipe that can hang a child", async () => {
+    const result = await runProcess({
+      binary: NODE,
+      args: ["-e", "let d=''; process.stdin.on('data',c=>d+=c); setTimeout(()=>{console.log('stdin-data:'+d.length)},300)"],
+      timeoutMs: 2000,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("stdin-data:0");
   });
 });
 
