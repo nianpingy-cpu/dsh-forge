@@ -56,7 +56,13 @@ describe("resolveInWorkspace", () => {
 
   it("rejects symlink escape", () => {
     const linkPath = join(root, "escape-link");
-    symlinkSync(outside, linkPath);
+    // Windows directory symlinks need admin/dev-mode; junctions are the
+    // platform-standard directory link and exercise the same escape path.
+    if (process.platform === "win32") {
+      symlinkSync(outside, linkPath, "junction");
+    } else {
+      symlinkSync(outside, linkPath);
+    }
     expect(() => resolveInWorkspace(root, join("escape-link", "evil.txt"))).toThrow(
       WorkspaceViolationError,
     );
