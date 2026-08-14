@@ -144,6 +144,15 @@ describe("ruff_check", () => {
     expect(result.error?.code).toBe("InvalidArguments");
   });
 
+  it("rejects a non-string path entry (no crash)", async () => {
+    const result = await tool().execute(
+      { paths: ["fixtures/sample.py", 42] },
+      ctx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
   it("reports BinaryNotFound when the binary is missing", async () => {
     const missingCtx: ToolContext = {
       workspaceRoot,
@@ -206,6 +215,9 @@ describe("ruff_format_check", () => {
     expect(result.diagnostics?.length).toBe(1);
     expect(result.diagnostics?.[0]?.rule).toBe("unformatted");
     expect(result.diagnostics?.[0]?.file).toContain("unformatted.py");
+    // Ruff format JSON carries no severity; 'would be reformatted' is a
+    // warning, not an error.
+    expect(result.diagnostics?.[0]?.severity).toBe("warning");
   });
 
   it("reports already-formatted files as clean", async () => {

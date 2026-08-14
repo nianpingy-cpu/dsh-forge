@@ -19,6 +19,7 @@ import {
   type ToolResult,
   type ToolContext,
   type Diagnostic,
+  type Severity,
 } from "@dsh-forge/core";
 import { resolveRuffBinary, RUFF_BINARY_HINT } from "./binary.js";
 
@@ -73,6 +74,14 @@ function safePaths(
 ): { ok: true; absolute: string[] } | { ok: false; result: ToolResult } {
   const absolute: string[] = [];
   for (const p of paths) {
+    if (typeof p !== "string") {
+      // Core validateArgs only checks array shape/minItems, not item types;
+      // a non-string entry would crash resolveInWorkspace with a TypeError.
+      return {
+        ok: false,
+        result: invalid("paths must contain only strings"),
+      };
+    }
     if (p === "") {
       // An empty entry resolves to the workspace root and would silently
       // scope the operation to the whole workspace.
@@ -109,9 +118,20 @@ interface RuffEntry {
 }
 
 /** Normalize a ruff JSON finding into a core Diagnostic. */
-function ruffEntryToDiagnostic(workspaceRoot: string, e: RuffEntry): Diagnostic {
+function ruffEntryToDiagnostic(
+  workspaceRoot: string,
+  e: RuffEntry,
+  severityOverride?: Severity,
+): Diagnostic {
   return toDiagnostic("ruff", {
-    severity: normalizeSeverity(e.severity),
+    // Some ruff outputs (format --check) report 'error' for cosmetic
+    // findings; callers may override to keep them from inflating error
+    // counts.
+    severity:
+      severityOverride ??
+      (e.severity !== undefined
+        ? normalizeSeverity(e.severity)
+        : normalizeSeverity(undefined)),
     rule: typeof e.code === "string" ? e.code : undefined,
     file: toRelativeFile(
       workspaceRoot,
@@ -254,9 +274,10 @@ function resultWithDiagnostics(
   entries: RuffEntry[],
   okSummary: string,
   run: { ok: true; stdout: string },
+  opts?: { fallbackSeverity?: Severity },
 ): ToolResult {
   const diagnostics = entries.map((e) =>
-    ruffEntryToDiagnostic(workspaceRoot, e),
+    ruffEntryToDiagnostic(workspaceRoot, e, opts?.fallbackSeverity),
   );
   return {
     ok: true,
@@ -361,7 +382,15 @@ const ruffFormatCheck: ToolDefinition = {
       count === 0
         ? "all files formatted"
         : `${count} file${count === 1 ? "" : "s"} would be reformatted`;
-    return resultWithDiagnostics(ctx.workspaceRoot, parsed.entries, summary, run);
+    // Ruff format JSON carries no severity; 'would be reformatted' is a
+    // warning, not an error.
+    return resultWithDiagnostics(
+      ctx.workspaceRoot,
+      parsed.entries,
+      summary,
+      run,
+      { fallbackSeverity: "warning" },
+    );
   },
 };
 
@@ -510,7 +539,7 @@ const ruffFix: ToolDefinition = {
     const verified = verifyTargetFiles(ctx.workspaceRoot, probeParsed.entries);
     if (!verified.ok) return verified.result;
     if (verified.files.length === 0) {
-      return { ok: true, summary: "all auto-fixable findings fixed", raw: "" };
+      return { ok: true, summary: "no findings to fix", raw: "" };
     }
 
     // Apply --fix only to the boundary-verified file list.

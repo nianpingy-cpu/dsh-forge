@@ -36,7 +36,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Ruff (integration fixtures)
-        run: python -m pip install --quiet ruff
+        run: python -m pip install --quiet --break-system-packages ruff
 
       - name: Typecheck
         run: pnpm typecheck
