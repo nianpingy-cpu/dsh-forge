@@ -17,6 +17,9 @@ importers:
       '@eslint/js':
         specifier: ^9.30.0
         version: 9.39.5
+      '@types/estree':
+        specifier: ^1.0.9
+        version: 1.0.9
       '@types/node':
         specifier: ^24.13.3
         version: 24.13.3
