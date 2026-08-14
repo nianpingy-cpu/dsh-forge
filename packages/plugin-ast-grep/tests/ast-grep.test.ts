@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll } from "vitest";
-import { mkdtempSync, cpSync } from "node:fs";
+import { mkdtempSync, cpSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -225,6 +225,311 @@ describe("ast_rule_test", () => {
   });
 });
 
+describe("ast_rewrite", () => {
+  const rewriteTool = () =>
+    astGrepPlugin.tools.find((t) => t.name === "ast_rewrite")!;
+  // apply mutates files, so it must run under an approved permission context.
+  // Built lazily (factory) because workspaceRoot is only assigned in beforeAll.
+  const approvedCtx = (): ToolContext => ({
+    workspaceRoot,
+    run: runProcess,
+    permission: { approved: true },
+  });
+
+  it("previews rewrites without modifying files", async () => {
+    const file = join(workspaceRoot, "fixtures", "sample.js");
+    const before = readFileSync(file, "utf8");
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "processData($$$ARGS)",
+        replacement: "processDataAsync($$$ARGS)",
+        language: "js",
+        paths: ["fixtures/sample.js"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/\d+ change/);
+    expect(readFileSync(file, "utf8")).toBe(before);
+    // Preview diagnostics must carry the real replacement text (sg's
+    // `replacement` JSON field), not "undefined".
+    const diag = result.diagnostics?.[0];
+    expect(diag?.message).toContain("processDataAsync");
+  });
+
+  it("applies rewrites to a workspace file (workspace-write)", async () => {
+    const dir = join(workspaceRoot, "rewrite-fixtures");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "target.js");
+    writeFileSync(file, "console.log('a');\nconsole.log('b');");
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: ["rewrite-fixtures/target.js"],
+      },
+      approvedCtx(),
+    );
+    expect(result.ok).toBe(true);
+    expect(readFileSync(file, "utf8")).toContain("console.info");
+    expect(readFileSync(file, "utf8")).not.toContain("console.log");
+  });
+
+  it("denies apply without permission approval", async () => {
+    const deniedCtx: ToolContext = { workspaceRoot, run: runProcess, permission: { approved: false } };
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: ["rewrite-fixtures/target.js"],
+      },
+      deniedCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("PermissionDenied");
+  });
+
+  it("applies with no matching pattern as a clean no-op", async () => {
+    const dir = join(workspaceRoot, "rewrite-nomatch");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "n.js");
+    writeFileSync(file, "tick();\ntock();");
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: ["rewrite-nomatch/n.js"],
+      },
+      approvedCtx(),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/0 changes/);
+    expect(readFileSync(file, "utf8")).toBe("tick();\ntock();");
+  });
+
+  it("apply with a failing target is not masked as a no-op", async () => {
+    // A nonexistent explicit target must be rejected up front, never silently
+    // reported as '0 changes'.
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "tick()",
+        replacement: "tock()",
+        language: "js",
+        paths: ["rewrite-nomatch/does-not-exist.js"],
+      },
+      approvedCtx(),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("blocks apply when a matched file escapes the workspace (symlink escape)", async () => {
+    // A match whose real location is outside the workspace (e.g. a symlink
+    // pointing out) must be rejected before any --update-all runs.
+    const outsideFile = join(workspaceRoot, "..", `outside-escape-${Date.now()}.js`);
+    let updateAllRan = false;
+    const mockCtx: ToolContext = {
+      workspaceRoot,
+      permission: { approved: true },
+      run: async (req) => {
+        if (req.args.includes("--json=pretty")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([
+              { file: outsideFile, text: "console.log('x')", replacement: "console.info('x')" },
+            ]),
+            stderr: "",
+            timedOut: false,
+            aborted: false,
+            truncated: false,
+            durationMs: 1,
+          };
+        }
+        updateAllRan = true;
+        return {
+          exitCode: 0,
+          stdout: "Applied 1 changes",
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 1,
+        };
+      },
+    };
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: ["fixtures/sample.js"],
+      },
+      mockCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+    expect(updateAllRan).toBe(false);
+  });
+
+  it("never writes through a symlink escaping the workspace", async () => {
+    // End-to-end guard (exercised on symlink-capable OSes; Windows without
+    // admin/Developer Mode skips). Whether sg follows the symlink (blocked)
+    // or skips it (0 changes), the outside target must never be modified.
+    const { symlinkSync, rmSync } = await import("node:fs");
+    const escapeDir = join(workspaceRoot, "escape-symlink");
+    mkdirSync(escapeDir, { recursive: true });
+    const outsideDir = join(workspaceRoot, "..", `outside-target-${Date.now()}`);
+    mkdirSync(outsideDir, { recursive: true });
+    const secret = join(outsideDir, "secret.js");
+    writeFileSync(secret, "console.log('secret');");
+    try {
+      symlinkSync(secret, join(escapeDir, "link.js"));
+    } catch {
+      rmSync(outsideDir, { recursive: true, force: true });
+      return; // cannot create symlinks here; skip
+    }
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: ["escape-symlink"],
+      },
+      approvedCtx(),
+    );
+    expect(readFileSync(secret, "utf8")).toBe("console.log('secret');");
+    rmSync(outsideDir, { recursive: true, force: true });
+    void result;
+  });
+
+  it("rejects an empty paths array (no whole-workspace rewrite)", async () => {
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: [],
+      },
+      approvedCtx(),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("rejects paths outside the workspace", async () => {
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "foo($X)",
+        replacement: "bar($X)",
+        language: "ts",
+        paths: ["../../outside.ts"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+  });
+
+  it("rejects an invalid AST pattern", async () => {
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "not: [valid $",
+        replacement: "x",
+        language: "ts",
+        paths: ["fixtures/sample.ts"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
+  });
+
+  it("reports no changes when the pattern has no matches", async () => {
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "nonexistent_call($X)",
+        replacement: "x",
+        language: "ts",
+        paths: ["fixtures/sample.ts"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/0 changes/);
+  });
+
+  it("rewrites across multiple files", async () => {
+    const dir = join(workspaceRoot, "rewrite-multi");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "a.js"), "tick();\ntock();");
+    writeFileSync(join(dir, "b.js"), "tick();");
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "tick()",
+        replacement: "tock()",
+        language: "js",
+        paths: ["rewrite-multi/a.js", "rewrite-multi/b.js"],
+      },
+      approvedCtx(),
+    );
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "a.js"), "utf8")).not.toContain("tick()");
+    expect(readFileSync(join(dir, "b.js"), "utf8")).not.toContain("tick()");
+  });
+
+  it("handles unicode content", async () => {
+    const dir = join(workspaceRoot, "rewrite-unicode");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "u.js");
+    writeFileSync(file, "greet('你好');\ngreet('世界');");
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "greet($X)",
+        replacement: "sayHello($X)",
+        language: "js",
+        paths: ["rewrite-unicode/u.js"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/2 changes/);
+  });
+
+  it("handles Windows-style backslash paths", async () => {
+    // Backslash normalization is win32-only by design; on POSIX '\' is a
+    // literal filename character, so this is gated to Windows.
+    if (process.platform !== "win32") return;
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "transform($DATA, $CFG)",
+        replacement: "transformAsync($DATA, $CFG)",
+        language: "ts",
+        paths: ["fixtures\\sample.ts"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/2 changes/);
+  });
+});
+
 describe("contract suite", () => {
   it("passes the shared plugin contract kit", async () => {
     const report = await runContractSuite(astGrepPlugin, {
@@ -261,6 +566,24 @@ describe("contract suite", () => {
             file: "fixtures/sample.ts",
           },
           invalid: { rule: "" },
+        },
+        ast_rewrite: {
+          // preview is read-only and safe for the contract suite's valid-args
+          // execution against the real runner.
+          valid: {
+            mode: "preview",
+            pattern: "foo($X)",
+            replacement: "bar($X)",
+            language: "ts",
+            paths: ["fixtures/sample.ts"],
+          },
+          invalid: {
+            mode: "preview",
+            pattern: 42,
+            replacement: "x",
+            language: "ts",
+            paths: ["fixtures/sample.ts"],
+          },
         },
       },
     });
