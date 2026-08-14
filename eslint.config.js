@@ -10,11 +10,16 @@ import tseslint from "typescript-eslint";
  * - exec/execSync bound to `node:child_process` (always run through a shell) → error
  *
  * The rule is binding-aware: it only reports calls whose callee resolves to a
- * `node:child_process` import (named, aliased, namespace, plain/computed
- * member access, require destructuring, or createRequire), so locally-defined
- * functions named `exec` are never flagged and bypass forms are caught.
- * A variable-held options object literal is tracked for `shell` as well.
- * Earlier no-op/bypassable versions were found by external review of PR #31.
+ * `node:child_process` import — named, aliased, namespace, plain/computed
+ * member access, require destructuring, plain require binding, createRequire
+ * (bound or inline chain) — so locally-defined functions named `exec` are
+ * never flagged. It also tracks variable-held options objects, later `shell`
+ * mutations, and object spreads of tracked options. This is defense-in-depth
+ * static analysis, not a complete security boundary: the structural guarantee
+ * is the core process runner API (spawn without a shell) that all plugins
+ * must use. Earlier no-op/bypassable versions were found by external review
+ * of PR #31; each reported form is covered by a regression test in
+ * tests/eslint-adr004.test.ts.
  */
 const noShellExecRule = {
   meta: {
