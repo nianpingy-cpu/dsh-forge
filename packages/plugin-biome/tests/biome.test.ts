@@ -91,6 +91,43 @@ describe("biome_check", () => {
     expect(result.diagnostics?.[0]?.column).toBe(7);
   });
 
+  it("handles an object path with location.span (schema robustness)", async () => {
+    // Some biome versions/docs serialize `location.path` as `{ file,
+    // language }` and positions under `location.span.start`; file and
+    // positions must still parse.
+    const target = join(workspaceRoot, "fixtures", "sample.js");
+    const objCtx: ToolContext = {
+      workspaceRoot,
+      run: async () => ({
+        exitCode: 1,
+        stdout: JSON.stringify({
+          summary: {},
+          diagnostics: [
+            {
+              severity: "warning",
+              message: "This variable x is unused.",
+              category: "lint/correctness/noUnusedVariables",
+              location: {
+                path: { file: target, language: "js" },
+                span: { start: { line: 1, column: 7 } },
+              },
+            },
+          ],
+          command: "check",
+        }),
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      }),
+    };
+    const result = await tool().execute({ paths: ["fixtures/sample.js"] }, objCtx);
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics?.[0]?.file).toContain("sample.js");
+    expect(result.diagnostics?.[0]?.line).toBe(1);
+  });
+
   it("covers all fixture languages", async () => {
     for (const f of LANG_FILES) {
       const result = await tool().execute({ paths: [`fixtures/${f}`] }, ctx);

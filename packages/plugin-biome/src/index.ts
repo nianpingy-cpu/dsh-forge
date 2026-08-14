@@ -105,29 +105,43 @@ interface BiomeEntry {
   message?: unknown;
   category?: unknown;
   location?: {
+    // Verified against @biomejs/biome 2.5.8: `path` is a string. Some
+    // versions/docs serialize it as `{ file, language }`; accept both.
     path?: unknown;
     start?: { line?: unknown; column?: unknown };
+    span?: { start?: { line?: unknown; column?: unknown } };
   };
-  // Biome's reporter has emitted position data under `span` in some versions;
-  // accept both shapes so a schema shift never silently drops positions.
+  // Some biome reporter versions emit position data under a top-level
+  // `span`; accept that shape too.
   span?: {
     start?: { line?: unknown; column?: unknown };
   };
 }
 
+/** Extract the file path from a biome diagnostic (string or {file} shape). */
+function biomeFile(e: BiomeEntry): string | undefined {
+  const p = e.location?.path;
+  if (typeof p === "string") return p;
+  if (p && typeof p === "object") {
+    const file = (p as { file?: unknown }).file;
+    if (typeof file === "string") return file;
+  }
+  return undefined;
+}
+
 /**
- * Extract (line, column) from a biome diagnostic. Biome's reporter emits
- * 1-based `location.start.line`/`column` for lint findings (verified against
- * the pinned @biomejs/biome 2.5.8: a first-line finding reports line 1).
- * The format diagnostic reports line 0 as a whole-file sentinel, which is
- * mapped to undefined (no specific line). Accepts both `location.start` and
- * the `span.start` shape for schema robustness.
+ * Extract (line, column) from a biome diagnostic. Verified against
+ * @biomejs/biome 2.5.8: lint diagnostics report 1-based lines under
+ * `location.start`; the format diagnostic reports line 0 as a whole-file
+ * sentinel (mapped to undefined). Accepts `location.start`,
+ * `location.span.start`, and top-level `span.start` for schema robustness.
  */
 function biomePosition(
   e: BiomeEntry,
 ): { line?: number; column?: number } {
   const start =
-    (e.location?.start as { line?: unknown; column?: unknown } | undefined) ??
+    e.location?.start ??
+    e.location?.span?.start ??
     e.span?.start ??
     {};
   const rawLine =
@@ -135,7 +149,8 @@ function biomePosition(
       ? start.line
       : undefined;
   const column =
-    typeof start.column === "number" && Number.isFinite(start.column)
+    typeof start.column === "number" && Number.isFinite(start.column) &&
+    start.column > 0
       ? start.column
       : undefined;
   return { line: rawLine !== undefined && rawLine > 0 ? rawLine : undefined, column };
@@ -155,10 +170,7 @@ function biomeEntryToDiagnostic(
         ? normalizeSeverity(e.severity)
         : normalizeSeverity(undefined)),
     rule: typeof e.category === "string" ? e.category : undefined,
-    file: toRelativeFile(
-      workspaceRoot,
-      typeof e.location?.path === "string" ? e.location.path : undefined,
-    ),
+    file: toRelativeFile(workspaceRoot, biomeFile(e)),
     line: pos.line,
     column: pos.column,
     message: typeof e.message === "string" ? e.message : "finding",
@@ -457,9 +469,17 @@ function verifyTargetFiles(
   entries: BiomeEntry[],
 ): { ok: true; files: string[] } | { ok: false; result: ToolResult } {
   const files: string[] = [];
+  const seen = new Set<string>();
   for (const e of entries) {
-    const raw =
-      typeof e.location?.path === "string" ? e.location.path : undefined;
+    if (!e || typeof e !== "object") {
+      return {
+        ok: false,
+        result: toolFailure(
+          "biome returned a malformed finding; cannot verify the write target",
+        ),
+      };
+    }
+    const raw = biomeFile(e);
     if (!raw) {
       return {
         ok: false,
@@ -469,7 +489,14 @@ function verifyTargetFiles(
       };
     }
     try {
-      files.push(resolveInWorkspace(workspaceRoot, raw));
+      const canonical = resolveInWorkspace(workspaceRoot, raw);
+      // Deduplicate: biome emits one JSON entry per finding, so the same
+      // file appears once per finding; the apply argv must list each file
+      // exactly once.
+      if (!seen.has(canonical)) {
+        seen.add(canonical);
+        files.push(canonical);
+      }
     } catch (err) {
       if (err instanceof WorkspaceViolationError) {
         return {
