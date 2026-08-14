@@ -264,6 +264,34 @@ describe("runProcess", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("stdin-data:0");
   });
+
+  // ---- regression round 3: findings from third review of PR #33 ----
+
+  it("does not redact short common env values like '1'", async () => {
+    const result = await runProcess({
+      binary: NODE,
+      args: ["-e", "console.log('1 file changed, 0 insertions')"],
+      env: { FORCE_COLOR: "1" },
+    });
+    expect(result.stdout).toContain("1 file changed, 0 insertions");
+  });
+
+  it("resolves when the child exits but a descendant holds the capture pipes", async () => {
+    // The parent exits immediately after spawning a detached grandchild that
+    // inherits stdout, so 'close' on the child is held open by the pipe. The
+    // runner must resolve via exit-destroy instead of hanging forever even
+    // when no timeout is set.
+    const script = `
+      const { spawn } = require("node:child_process");
+      const c = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
+        stdio: "inherit",
+        detached: true,
+      });
+      c.unref();
+    `;
+    const result = await runProcess({ binary: NODE, args: ["-e", script] });
+    expect(result.exitCode).toBe(0);
+  });
 });
 
 /** True once the process with the given pid is no longer alive. */
