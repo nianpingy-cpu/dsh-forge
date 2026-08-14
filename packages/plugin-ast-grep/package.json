@@ -1,0 +1,19 @@
+{
+  "name": "@dsh-forge/plugin-ast-grep",
+  "version": "0.1.0",
+  "description": "ast-grep tools for DeepSeek Harness: typed AST search, scan, inspect, rule test",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean"
+  },
+  "dependencies": {
+    "@dsh-forge/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@ast-grep/cli": "^0.40.0",
+    "tsup": "^8.5.0"
+  }
+}

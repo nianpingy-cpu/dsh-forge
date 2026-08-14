@@ -3,4 +3,5 @@ packages:
   - "presets/*"
 
 allowBuilds:
+  '@ast-grep/cli': true
   esbuild: true
