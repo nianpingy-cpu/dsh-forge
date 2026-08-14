@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll } from "vitest";
-import { mkdtempSync, rmSync, cpSync } from "node:fs";
+import { mkdtempSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   astGrepPlugin,
@@ -43,7 +43,8 @@ describe("ast_search", () => {
       ctx,
     );
     expect(result.ok).toBe(true);
-    expect(result.summary).toMatch(/1 match/);
+    // sample.ts contains two transform(...) calls
+    expect(result.summary).toMatch(/2 match/);
     expect(result.raw).toContain("transform(data, config)");
   });
 
@@ -179,7 +180,7 @@ describe("ast_rule_test", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.summary).toMatch(/valid/i);
-    expect(result.summary).toMatch(/1 match/);
+    expect(result.summary).toMatch(/2 match/);
   });
 });
 
