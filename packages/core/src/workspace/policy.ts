@@ -6,7 +6,7 @@
  * Side-effecting mutation classes require explicit approval; destructive
  * operations additionally require the destructive guard.
  */
-import { realpathSync } from "node:fs";
+import { realpathSync, lstatSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
 
 export type MutationClass =
@@ -35,41 +35,83 @@ export class DestructiveOperationError extends Error {
 
 /**
  * Resolve a target path inside the workspace root, rejecting escapes.
- * Symlinks are resolved to their real paths before the boundary check.
+ * Symlinks are resolved to their real paths before the boundary check, and
+ * the *canonicalized* location is returned (not the raw input path) so a
+ * symlink swap between validation and use cannot escape the workspace.
  */
 export function resolveInWorkspace(root: string, target: string): string {
   const workspaceRoot = realpathSync(root);
-  const candidate = isAbsolute(target)
-    ? resolve(target)
-    : resolve(workspaceRoot, target);
+  // Backslash separators are a Windows path convention; normalize them only
+  // there. On POSIX a backslash is a legitimate filename character and must
+  // not be rewritten.
+  const normalizedTarget =
+    process.platform === "win32" ? target.replace(/\\/g, "/") : target;
+  const candidate = isAbsolute(normalizedTarget)
+    ? resolve(normalizedTarget)
+    : resolve(workspaceRoot, normalizedTarget);
 
-  // Resolve the deepest existing ancestor of the candidate so symlinked
-  // directories are canonicalized before containment is checked.
-  const realCandidate = realpathOfDeepestExisting(candidate);
-  const realRoot = realpathOfDeepestExisting(workspaceRoot);
+  // Fully canonicalize the deepest existing ancestor, then re-append any
+  // non-existent tail. Both sides are canonical and compared with their
+  // on-disk casing (realpathSync preserves it) — a case-insensitive
+  // comparison would let differently-cased siblings count as "inside" on
+  // case-sensitive filesystems.
+  const canonical = canonicalize(candidate);
+  const rootCanonical = canonicalize(workspaceRoot);
 
-  const normalizedCandidate = realCandidate.toLowerCase();
-  const normalizedRoot = realRoot.toLowerCase();
   const contained =
-    normalizedCandidate === normalizedRoot ||
-    normalizedCandidate.startsWith(normalizedRoot + sep.toLowerCase());
-
+    canonical === rootCanonical || canonical.startsWith(rootCanonical + sep);
   if (!contained) {
     throw new WorkspaceViolationError(target);
   }
-  return candidate;
+  return canonical;
 }
 
-function realpathOfDeepestExisting(path: string): string {
-  let current = resolve(path);
+/**
+ * Canonicalize a path: realpath the deepest existing ancestor and re-append
+ * any non-existent tail (preserving the requested tail, e.g. "a.ts").
+ *
+ * Error handling rules (do NOT conflate denials with non-existence):
+ * - Walk up to an ancestor ONLY on ENOENT (the path truly does not exist).
+ * - Rethrow EACCES/EPERM (access denied), ELOOP (symlink loop) and other
+ *   hard errors instead of judging the boundary on an ancestor.
+ * - A dangling symlink (lstat succeeds but realpath cannot follow it) is an
+ *   error, not a non-existent path.
+ */
+function canonicalize(path: string): string {
+  const original = resolve(path);
+  let current = original;
   for (;;) {
     try {
-      return realpathSync(current);
-    } catch {
+      const real = realpathSync(current);
+      const tail = original.slice(current.length);
+      return tail ? real + tail : real;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        // Access denied, symlink loop, or any non-"missing" failure.
+        throw error;
+      }
+      // A real directory entry that cannot be followed (this includes the
+      // leaf itself: a target that IS a dangling symlink) is not a plain
+      // "does not exist". Reject rather than walk up and resurrect the
+      // symlink path as "canonical", which a later write would follow
+      // outside the workspace.
+      if (isDanglingSymlink(current)) {
+        throw error;
+      }
       const parent = resolve(current, "..");
-      if (parent === current) return current; // reached filesystem root
+      if (parent === current) return original; // reached filesystem root
       current = parent;
     }
+  }
+}
+
+/** True when `path` exists as a symbolic link (possibly dangling). */
+function isDanglingSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
   }
 }
 

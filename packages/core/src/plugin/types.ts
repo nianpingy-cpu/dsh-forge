@@ -28,7 +28,8 @@ export interface ToolResult {
   /** Compact model-facing summary. */
   summary: string;
   diagnostics?: Diagnostic[];
-  resultSummary?: ResultSummary;
+  /** Compressed model-facing view for large diagnostic sets. */
+  summaryBlock?: ResultSummary;
   /** Capped raw output, reference only. */
   raw?: string;
   error?: ToolError;

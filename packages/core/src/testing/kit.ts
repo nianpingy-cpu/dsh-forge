@@ -8,13 +8,18 @@
  */
 import { CORE_VERSION } from "../index.js";
 import { runProcess } from "../process/runner.js";
+import type { ExecutionRequest, ExecutionResult } from "../process/runner.js";
 import {
-  validateArgs,
   type Plugin,
   type ToolContext,
   type ToolDefinition,
   type ToolResult,
 } from "../plugin/types.js";
+
+/** Signature of the core process runner, injectable for deterministic tests. */
+export type ExecutionRunner = (
+  request: ExecutionRequest,
+) => Promise<ExecutionResult>;
 
 export interface ContractCheck {
   name: string;
@@ -34,6 +39,21 @@ export interface ToolArgsSpec {
 
 export interface ContractSuiteOptions {
   workspaceRoot: string;
+  /**
+   * Name of a tool that must return BinaryNotFound when its binary is
+   * absent. The kit runs it against a mock runner that reports BinaryNotFound
+   * and asserts the tool (a) actually invoked ctx.run and (b) mapped the
+   * runner condition to the normalized BinaryNotFound error — so a plugin
+   * that fails to implement binary detection is caught, and real plugins
+   * wrapping installed binaries can pass deterministically.
+   */
+  missingBinaryTool: string;
+  /**
+   * Override the process runner used for the tool execution checks (defaults
+   * to the real runProcess). Plugins may inject a mock to test tools without
+   * depending on real binaries/environment.
+   */
+  runner?: ExecutionRunner;
   /** Per-tool valid/invalid argument samples used by execution checks. */
   toolArgs: Record<string, ToolArgsSpec>;
 }
@@ -50,8 +70,8 @@ export function renderModelFacing(result: ToolResult): string {
   if (result.error) {
     lines.push(`error: ${result.error.code}: ${result.error.message}`);
   }
-  if (result.resultSummary) {
-    const s = result.resultSummary;
+  if (result.summaryBlock) {
+    const s = result.summaryBlock;
     lines.push(
       `findings: ${s.count} (error=${s.bySeverity.error}, warning=${s.bySeverity.warning}, info=${s.bySeverity.info}, critical=${s.bySeverity.critical})${s.truncated ? " [truncated]" : ""}`,
     );
@@ -90,7 +110,7 @@ export async function runContractSuite(
   const checks: ContractCheck[] = [];
   const ctx: ToolContext = {
     workspaceRoot: options.workspaceRoot,
-    run: runProcess,
+    run: options.runner ?? runProcess,
   };
 
   // 1. plugin loads
@@ -125,6 +145,10 @@ export async function runContractSuite(
 
   for (const tool of plugin.tools) {
     const spec = options.toolArgs[tool.name];
+    // The designated binary probe's contract is to return BinaryNotFound, so
+    // it is exempt from the "valid args succeed" execution checks (it is
+    // exercised by check 9 instead).
+    const isBinaryProbe = tool.name === options.missingBinaryTool;
 
     // 4. schema valid
     const schemaOk =
@@ -158,38 +182,45 @@ export async function runContractSuite(
       continue;
     }
 
-    // 6. typed args accepted, canonical result
-    try {
-      const validResult = await tool.execute(spec.valid, ctx);
-      checks.push(
-        check(
-          `typed args accepted: ${tool.name}`,
-          isCanonicalResult(validResult),
-        ),
-      );
-      checks.push(
-        check(
-          `canonical result: ${tool.name}`,
-          isCanonicalResult(validResult) &&
-            (validResult.ok || validResult.error !== undefined),
-        ),
-      );
-      // 7. model-facing render
-      const rendered = renderModelFacing(validResult);
-      checks.push(
-        check(
-          `model-facing render: ${tool.name}`,
-          typeof rendered === "string" && rendered.length > 0,
-        ),
-      );
-    } catch (err) {
-      checks.push(
-        check(
-          `typed args accepted: ${tool.name}`,
-          false,
-          `threw: ${String(err)}`,
-        ),
-      );
+    // 6. typed args accepted: the tool must actually succeed (ok:true) on a
+    //    valid invocation. A stub that always returns a normalized failure
+    //    for valid args is a non-functional tool and must not pass.
+    if (!isBinaryProbe) {
+      try {
+        const validResult = await tool.execute(spec.valid, ctx);
+        const accepted =
+          isCanonicalResult(validResult) && validResult.ok === true;
+        checks.push(
+          check(
+            `typed args accepted: ${tool.name}`,
+            accepted,
+            `got ok=${String(validResult.ok)}, error=${String(validResult.error?.code)}`,
+          ),
+        );
+        checks.push(
+          check(
+            `canonical result: ${tool.name}`,
+            isCanonicalResult(validResult) &&
+              (validResult.ok || validResult.error !== undefined),
+          ),
+        );
+        // 7. model-facing render
+        const rendered = renderModelFacing(validResult);
+        checks.push(
+          check(
+            `model-facing render: ${tool.name}`,
+            typeof rendered === "string" && rendered.length > 0,
+          ),
+        );
+      } catch (err) {
+        checks.push(
+          check(
+            `typed args accepted: ${tool.name}`,
+            false,
+            `threw: ${String(err)}`,
+          ),
+        );
+      }
     }
 
     // 8. invalid args rejected with InvalidArguments
@@ -214,10 +245,71 @@ export async function runContractSuite(
     }
   }
 
-  // 9. binary missing normalization: at least one tool must demonstrate
-  //    BinaryNotFound when its binary is unavailable. Plugins prove this in
-  //    their own suites with a missing-binary fixture; the kit checks that
-  //    the plugin declares which binary it wraps.
+  // 9. binary-missing path returns BinaryNotFound. The kit runs the
+  //    designated probe tool against a MOCK runner that reports
+  //    BinaryNotFound for every request, and asserts that the tool
+  //    (a) actually invoked ctx.run (proving it executes binaries through
+  //    the runner rather than hardcoding the error) and (b) mapped the
+  //    runner's condition to the normalized BinaryNotFound error. This is
+  //    deterministic for real plugins wrapping installed binaries and still
+  //    catches plugins that fail to implement binary detection.
+  const probe = plugin.tools.find((t) => t.name === options.missingBinaryTool);
+  if (!probe) {
+    checks.push(
+      check(
+        "binary-missing path returns BinaryNotFound",
+        false,
+        `no tool named "${options.missingBinaryTool}" in the plugin`,
+      ),
+    );
+  } else {
+    let runnerInvoked = false;
+    const missingBinaryCtx: ToolContext = {
+      workspaceRoot: options.workspaceRoot,
+      run: async (request) => {
+        runnerInvoked = true;
+        return {
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 0,
+          error: {
+            code: "BinaryNotFound",
+            message: `mock runner: binary not found: ${request.binary}`,
+          },
+        };
+      },
+    };
+    try {
+      const probeResult = await probe.execute({}, missingBinaryCtx);
+      const detected =
+        runnerInvoked &&
+        probeResult.ok === false &&
+        probeResult.error?.code === "BinaryNotFound";
+      checks.push(
+        check(
+          "binary-missing path returns BinaryNotFound",
+          detected,
+          runnerInvoked
+            ? `got ok=${String(probeResult.ok)}, error=${String(probeResult.error?.code)}`
+            : "tool never invoked ctx.run (hardcoded result, not real binary detection)",
+        ),
+      );
+    } catch (err) {
+      checks.push(
+        check(
+          "binary-missing path returns BinaryNotFound",
+          false,
+          `threw instead of returning normalized error: ${String(err)}`,
+        ),
+      );
+    }
+  }
+
+  // 10. the plugin declares which upstream binary it wraps.
   checks.push(
     check(
       "upstream binary declared",
@@ -229,5 +321,8 @@ export async function runContractSuite(
   return { passed: checks.every((c) => c.passed), checks };
 }
 
-export { validateArgs };
 export type { Plugin, ToolDefinition, ToolResult, ToolContext };
+// Note: `validateArgs` is deliberately NOT re-exported here. index.ts already
+// exposes it via `export * from "./plugin/types.js"`; a second value
+// re-export from this module would create an ambiguous `export *` name in the
+// package namespace for consumers (bundlers / strict TS / native ESM).
