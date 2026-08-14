@@ -1,0 +1,18 @@
+{
+  "name": "@dsh-forge/plugin-uv",
+  "version": "0.1.0",
+  "description": "uv tools for DeepSeek Harness: project status, python find, sync, tree, run, add, remove",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean"
+  },
+  "dependencies": {
+    "@dsh-forge/core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0"
+  }
+}

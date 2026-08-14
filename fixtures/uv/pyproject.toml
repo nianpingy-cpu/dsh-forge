@@ -1,0 +1,6 @@
+[project]
+name = "dsh-uv-demo"
+version = "0.1.0"
+description = "uv plugin fixture project"
+requires-python = ">=3.9"
+dependencies = []

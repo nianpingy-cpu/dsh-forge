@@ -38,6 +38,9 @@ jobs:
       - name: Install Ruff (integration fixtures)
         run: python -m pip install --quiet --break-system-packages ruff
 
+      - name: Install uv (integration fixtures)
+        uses: astral-sh/setup-uv@v5
+
       - name: Typecheck
         run: pnpm typecheck
 
