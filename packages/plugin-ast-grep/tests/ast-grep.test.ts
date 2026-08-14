@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll } from "vitest";
-import { mkdtempSync, cpSync } from "node:fs";
+import { mkdtempSync, cpSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -222,6 +222,148 @@ describe("ast_rule_test", () => {
     expect(result.ok).toBe(true);
     expect(result.summary).toMatch(/valid/i);
     expect(result.summary).toMatch(/2 match/);
+  });
+});
+
+describe("ast_rewrite", () => {
+  const rewriteTool = () =>
+    astGrepPlugin.tools.find((t) => t.name === "ast_rewrite")!;
+
+  it("previews rewrites without modifying files", async () => {
+    const file = join(workspaceRoot, "fixtures", "sample.js");
+    const before = readFileSync(file, "utf8");
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "processData($$$ARGS)",
+        replacement: "processDataAsync($$$ARGS)",
+        language: "js",
+        paths: ["fixtures/sample.js"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/\d+ change/);
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("applies rewrites to a workspace file (workspace-write)", async () => {
+    const dir = join(workspaceRoot, "rewrite-fixtures");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "target.js");
+    writeFileSync(file, "console.log('a');\nconsole.log('b');");
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: ["rewrite-fixtures/target.js"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(readFileSync(file, "utf8")).toContain("console.info");
+    expect(readFileSync(file, "utf8")).not.toContain("console.log");
+  });
+
+  it("rejects paths outside the workspace", async () => {
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "foo($X)",
+        replacement: "bar($X)",
+        language: "ts",
+        paths: ["../../outside.ts"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+  });
+
+  it("rejects an invalid AST pattern", async () => {
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "not: [valid $",
+        replacement: "x",
+        language: "ts",
+        paths: ["fixtures/sample.ts"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
+  });
+
+  it("reports no changes when the pattern has no matches", async () => {
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "nonexistent_call($X)",
+        replacement: "x",
+        language: "ts",
+        paths: ["fixtures/sample.ts"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/0 changes/);
+  });
+
+  it("rewrites across multiple files", async () => {
+    const dir = join(workspaceRoot, "rewrite-multi");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "a.js"), "tick();\ntock();");
+    writeFileSync(join(dir, "b.js"), "tick();");
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "tick()",
+        replacement: "tock()",
+        language: "js",
+        paths: ["rewrite-multi/a.js", "rewrite-multi/b.js"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, "a.js"), "utf8")).not.toContain("tick()");
+    expect(readFileSync(join(dir, "b.js"), "utf8")).not.toContain("tick()");
+  });
+
+  it("handles unicode content", async () => {
+    const dir = join(workspaceRoot, "rewrite-unicode");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "u.js");
+    writeFileSync(file, "greet('你好');\ngreet('世界');");
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "greet($X)",
+        replacement: "sayHello($X)",
+        language: "js",
+        paths: ["rewrite-unicode/u.js"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/2 changes/);
+  });
+
+  it("handles Windows-style backslash paths", async () => {
+    const result = await rewriteTool().execute(
+      {
+        mode: "preview",
+        pattern: "transform($DATA, $CFG)",
+        replacement: "transformAsync($DATA, $CFG)",
+        language: "ts",
+        paths: ["fixtures\\sample.ts"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/2 changes/);
   });
 });
 
