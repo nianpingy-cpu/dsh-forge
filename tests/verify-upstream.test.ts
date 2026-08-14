@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { validateManifest } from "../scripts/verify-upstream";
 
 const validManifest = {
@@ -43,8 +45,10 @@ describe("validateManifest", () => {
   });
 
   it("rejects a missing required field", () => {
-    const { branch: _branch, ...withoutBranch } = validManifest;
-    const result = validateManifest(withoutBranch);
+    const result = validateManifest({
+      ...validManifest,
+      branch: undefined,
+    });
     expect(result.valid).toBe(false);
     if (!result.valid) expect(result.errors.join("\n")).toMatch(/branch/);
   });
@@ -74,5 +78,14 @@ describe("validateManifest", () => {
     });
     expect(result.valid).toBe(false);
     if (!result.valid) expect(result.errors.join("\n")).toMatch(/notes/);
+  });
+
+  it("accepts the real repository manifest", () => {
+    const manifestPath = fileURLToPath(
+      new URL("../compatibility/deepseek-harness.json", import.meta.url),
+    );
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const result = validateManifest(manifest);
+    expect(result.valid).toBe(true);
   });
 });

@@ -1,0 +1,17 @@
+{
+  "repository": "deepseek-ai/deepseek-harness",
+  "commit": "47f943859bef60e4160492346772ded9b24f765a",
+  "branch": "master",
+  "checked_at": "2026-08-14",
+  "node_requirement": ">=22.19 (upstream CI covers 22.19, 24, 26)",
+  "package_manager": "pnpm@11.7.0 via corepack (upstream pin)",
+  "tool_registration_api": "Cordis plugin architecture ('everything is a plugin'); Host/Client aggregate layout; see docs/development.md at the pinned commit",
+  "permission_hook_api": "TBD — must be verified against the pinned commit before ISSUE-006/010 integration work; do not fabricate",
+  "notes": [
+    "Developer preview: upstream explicitly warns of compatibility-breaking changes.",
+    "License: MIT (upstream repo).",
+    "Real-API e2e upstream uses DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL env vars; keyless CI is the default.",
+    "Upstream plugin discoverability topic: dsh-plugin.",
+    "Upgrading the pinned commit requires updating this manifest and re-running scripts/verify-upstream tests."
+  ]
+}
