@@ -10,6 +10,13 @@ import type { ChildProcess } from "node:child_process";
 
 /** Grace period between SIGTERM and SIGKILL when terminating a process tree. */
 const KILL_ESCALATION_MS = 1000;
+/**
+ * Additional slack after the SIGKILL escalation before the promise is
+ * force-resolved. Guards against descendants that detach into their own
+ * process group/session and keep the capture pipes open (which would
+ * otherwise prevent the 'close' event from ever firing).
+ */
+const DEADLINE_SLACK_MS = 2000;
 
 export interface ExecutionRequest {
   /** Binary to execute. Absolute path recommended; must not be a shell line. */
@@ -170,6 +177,17 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
     let aborted = false;
     let settled = false;
 
+    // Env values are secrets by construction: if the child echoes them back,
+    // the captured output must not leak them even when the caller forgets to
+    // list them in `redact`.
+    const autoRedact: string[] = [];
+    if (env) {
+      for (const value of Object.values(env)) {
+        if (typeof value === "string" && value.length > 0) autoRedact.push(value);
+      }
+    }
+    const redactList = [...autoRedact, ...(redact ?? [])];
+
     let child: ChildProcess;
     try {
       child = spawn(binary, [...args], {
@@ -177,6 +195,9 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
         cwd,
         env: buildEnv(DEFAULT_ENV_ALLOWLIST, env),
         windowsHide: true,
+        // stdin is ignored/closed so a child reading stdin cannot hang the
+        // harness; stdout/stderr are piped for capture.
+        stdio: ["ignore", "pipe", "pipe"],
         // Detached on POSIX creates a process group so the whole tree can be
         // terminated on timeout/abort; on Windows taskkill /T handles it.
         detached: process.platform !== "win32",
@@ -196,15 +217,17 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
     }
 
     let escalationTimer: ReturnType<typeof setTimeout> | undefined;
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
 
     const finish = (exitCode: number | null, error?: ExecutionError) => {
       if (settled) return;
       settled = true;
       if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
       if (escalationTimer !== undefined) clearTimeout(escalationTimer);
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
       if (signal) signal.removeEventListener("abort", onAbort);
       const apply = (state: CaptureState): string =>
-        redact ? redactSecrets(state.data, redact) : state.data;
+        redactList.length > 0 ? redactSecrets(state.data, redactList) : state.data;
       resolve({
         exitCode,
         stdout: apply(stdoutState),
@@ -217,12 +240,23 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
       });
     };
 
-    /** Graceful kill of the tree, escalating to SIGKILL after the grace period. */
+    /**
+     * Graceful kill of the tree, escalating to SIGKILL after the grace
+     * period, and force-resolving via an overall deadline afterwards. The
+     * deadline guarantees the promise never hangs: a descendant that detaches
+     * into its own process group/session can keep the capture pipes open and
+     * prevent 'close' from firing, so we resolve on a hard timer.
+     */
     function terminateTree(): void {
       killTree(child, "SIGTERM");
       escalationTimer = setTimeout(() => {
         killTree(child, "SIGKILL");
       }, KILL_ESCALATION_MS);
+      if (deadlineTimer === undefined) {
+        deadlineTimer = setTimeout(() => {
+          finish(null);
+        }, KILL_ESCALATION_MS + DEADLINE_SLACK_MS);
+      }
     }
 
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;

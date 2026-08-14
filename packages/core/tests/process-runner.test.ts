@@ -118,10 +118,13 @@ describe("runProcess", () => {
   it("passes explicitly provided env entries to the child", async () => {
     const result = await runProcess({
       binary: NODE,
-      args: ["-e", "console.log(process.env.DSH_TEST_EXPLICIT ?? 'unset')"],
+      args: [
+        "-e",
+        "console.log(process.env.DSH_TEST_EXPLICIT === 'present' ? 'ENV_SET' : 'ENV_MISSING')",
+      ],
       env: { DSH_TEST_EXPLICIT: "present" },
     });
-    expect(result.stdout.trim()).toBe("present");
+    expect(result.stdout.trim()).toBe("ENV_SET");
   });
 
   it("redacts secret values from captured output", async () => {
