@@ -252,6 +252,10 @@ describe("ast_rewrite", () => {
     expect(result.ok).toBe(true);
     expect(result.summary).toMatch(/\d+ change/);
     expect(readFileSync(file, "utf8")).toBe(before);
+    // Preview diagnostics must carry the real replacement text (sg's
+    // `replacement` JSON field), not "undefined".
+    const diag = result.diagnostics?.[0];
+    expect(diag?.message).toContain("processDataAsync");
   });
 
   it("applies rewrites to a workspace file (workspace-write)", async () => {
@@ -311,8 +315,8 @@ describe("ast_rewrite", () => {
   });
 
   it("apply with a failing target is not masked as a no-op", async () => {
-    // sg exits 1 with empty stdout AND a non-empty stderr (ERROR: ...) when
-    // a target cannot be read; this must surface as a failure, not '0 changes'.
+    // A nonexistent explicit target must be rejected up front, never silently
+    // reported as '0 changes'.
     const result = await rewriteTool().execute(
       {
         mode: "apply",
@@ -324,7 +328,88 @@ describe("ast_rewrite", () => {
       approvedCtx(),
     );
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe("ToolFailure");
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("blocks apply when a matched file escapes the workspace (symlink escape)", async () => {
+    // A match whose real location is outside the workspace (e.g. a symlink
+    // pointing out) must be rejected before any --update-all runs.
+    const outsideFile = join(workspaceRoot, "..", `outside-escape-${Date.now()}.js`);
+    let updateAllRan = false;
+    const mockCtx: ToolContext = {
+      workspaceRoot,
+      permission: { approved: true },
+      run: async (req) => {
+        if (req.args.includes("--json=pretty")) {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([
+              { file: outsideFile, text: "console.log('x')", replacement: "console.info('x')" },
+            ]),
+            stderr: "",
+            timedOut: false,
+            aborted: false,
+            truncated: false,
+            durationMs: 1,
+          };
+        }
+        updateAllRan = true;
+        return {
+          exitCode: 0,
+          stdout: "Applied 1 changes",
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 1,
+        };
+      },
+    };
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: ["fixtures/sample.js"],
+      },
+      mockCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+    expect(updateAllRan).toBe(false);
+  });
+
+  it("never writes through a symlink escaping the workspace", async () => {
+    // End-to-end guard (exercised on symlink-capable OSes; Windows without
+    // admin/Developer Mode skips). Whether sg follows the symlink (blocked)
+    // or skips it (0 changes), the outside target must never be modified.
+    const { symlinkSync, rmSync } = await import("node:fs");
+    const escapeDir = join(workspaceRoot, "escape-symlink");
+    mkdirSync(escapeDir, { recursive: true });
+    const outsideDir = join(workspaceRoot, "..", `outside-target-${Date.now()}`);
+    mkdirSync(outsideDir, { recursive: true });
+    const secret = join(outsideDir, "secret.js");
+    writeFileSync(secret, "console.log('secret');");
+    try {
+      symlinkSync(secret, join(escapeDir, "link.js"));
+    } catch {
+      rmSync(outsideDir, { recursive: true, force: true });
+      return; // cannot create symlinks here; skip
+    }
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: ["escape-symlink"],
+      },
+      approvedCtx(),
+    );
+    expect(readFileSync(secret, "utf8")).toBe("console.log('secret');");
+    rmSync(outsideDir, { recursive: true, force: true });
+    void result;
   });
 
   it("rejects an empty paths array (no whole-workspace rewrite)", async () => {

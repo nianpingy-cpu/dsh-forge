@@ -524,6 +524,15 @@ const astRewrite: ToolDefinition = {
     const safe = safePaths(ctx.workspaceRoot, paths);
     if (!safe.ok) return safe.result;
 
+    // Rewriting only makes sense for paths that exist; a nonexistent target
+    // would otherwise be silently reported as "0 changes". Reject early.
+    const { existsSync } = await import("node:fs");
+    for (const p of safe.absolute) {
+      if (!existsSync(p)) {
+        return invalid(`path does not exist: ${p}`);
+      }
+    }
+
     if (mode === "preview") {
       // `--json` reports matches (with the replacement text) without writing.
       const run = await runSg(ctx, [
@@ -587,10 +596,79 @@ const astRewrite: ToolDefinition = {
       };
     }
 
-    // apply: `--update-all` rewrites the matched files in place. With no
-    // matches, sg exits 1 with empty stdout (grep-style no-match); that is a
-    // clean no-op, so runSg is told to treat it as success.
-    const run = await runSg(
+    // apply: to close the symlink-escape gap (ADR-005), never let sg walk
+    // directories at write time. First run a read-only probe to discover the
+    // exact matched files, boundary-verify each one (resolveInWorkspace
+    // canonicalizes the real path and rejects any file whose real location
+    // escapes the workspace, e.g. a symlink pointing outside), and only then
+    // run `--update-all` against that verified file list.
+    const probe = await runSg(ctx, [
+      "run",
+      "-p",
+      pattern,
+      "-r",
+      replacement,
+      "-l",
+      language,
+      "--json=pretty",
+      ...safe.absolute,
+    ]);
+    if (!probe.ok) return probe.result;
+    if (/ERROR node/i.test(probe.stderr)) {
+      return {
+        ok: false,
+        summary: "invalid AST pattern",
+        error: {
+          code: "ToolFailure",
+          message: "ast-grep parsed the pattern with an ERROR node; pattern is not a valid AST pattern",
+        },
+      };
+    }
+    const parsed = parseJsonOutput("ast-grep", probe.stdout);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        summary: "ast-grep produced malformed output",
+        error: { code: "ParseFailure", message: parsed.error },
+      };
+    }
+    const matches = Array.isArray(parsed.value)
+      ? (parsed.value as Record<string, unknown>[])
+      : [];
+    if (matches.length === 0) {
+      return {
+        ok: true,
+        summary: "0 changes (no matches; nothing rewritten)",
+        raw: "",
+      };
+    }
+    // Boundary-verify every file sg would write to. A match inside a symlink
+    // that points outside the workspace resolves outside and is rejected.
+    const targets: string[] = [];
+    for (const m of matches) {
+      const f = typeof m.file === "string" ? m.file : undefined;
+      if (!f) continue;
+      try {
+        targets.push(resolveInWorkspace(ctx.workspaceRoot, f));
+      } catch (err) {
+        if (err instanceof WorkspaceViolationError) {
+          return {
+            ok: false,
+            summary: "rewrite blocked: matched file escapes the workspace",
+            error: { code: "WorkspaceViolation", message: err.message },
+          };
+        }
+        throw err;
+      }
+    }
+    if (targets.length === 0) {
+      return {
+        ok: true,
+        summary: "0 changes (no matches; nothing rewritten)",
+        raw: "",
+      };
+    }
+    const apply = await runSg(
       ctx,
       [
         "run",
@@ -601,38 +679,19 @@ const astRewrite: ToolDefinition = {
         "-l",
         language,
         "--update-all",
-        ...safe.absolute,
+        ...targets,
       ],
       { noMatchIsOk: true },
     );
-    if (!run.ok) return run.result;
-    if (/ERROR node/i.test(run.stderr)) {
-      return {
-        ok: false,
-        summary: "invalid AST pattern",
-        error: {
-          code: "ToolFailure",
-          message: "ast-grep parsed the pattern with an ERROR node; pattern is not a valid AST pattern",
-        },
-      };
-    }
-    if (run.exitCode === 1) {
-      return {
-        ok: true,
-        summary: "0 changes (no matches; nothing rewritten)",
-        raw:
-          run.stdout.length > 20_000
-            ? run.stdout.slice(0, 20_000) + "\n...[truncated]"
-            : run.stdout,
-      };
-    }
+    if (!apply.ok) return apply.result;
+    const fileCount = new Set(targets).size;
     return {
       ok: true,
-      summary: `rewrite applied to ${safe.absolute.length} path(s) (workspace-write)`,
+      summary: `rewrite applied to ${matches.length} change${matches.length === 1 ? "" : "s"} across ${fileCount} file${fileCount === 1 ? "" : "s"} (workspace-write)`,
       raw:
-        run.stdout.length > 20_000
-          ? run.stdout.slice(0, 20_000) + "\n...[truncated]"
-          : run.stdout,
+        apply.stdout.length > 20_000
+          ? apply.stdout.slice(0, 20_000) + "\n...[truncated]"
+          : apply.stdout,
     };
   },
 };
