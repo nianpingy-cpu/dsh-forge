@@ -128,7 +128,7 @@ describe("trivy_repo_scan", () => {
     expect(b.error?.code).toBe("InvalidArguments");
   });
 
-  it("redacts secret Match values from raw output", async () => {
+  it("redacts secret Match and Code line content from raw output", async () => {
     const withSecrets = JSON.stringify({
       Results: [
         {
@@ -140,6 +140,16 @@ describe("trivy_repo_scan", () => {
               Severity: "CRITICAL",
               Title: "AWS Access Key ID",
               Match: "AKIA5K4D3X7Q2T9P0Z1W",
+              Code: {
+                Lines: [
+                  {
+                    Number: 2,
+                    Content: "aws_access_key_id=AKIA5K4D3X7Q2T9P0Z1W",
+                    IsCause: true,
+                    Highlighted: "aws_access_key_id=AKIA5K4D3X7Q2T9P0Z1W",
+                  },
+                ],
+              },
             },
           ],
         },

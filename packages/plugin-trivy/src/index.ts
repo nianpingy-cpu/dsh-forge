@@ -343,8 +343,10 @@ function findingsToDiagnostics(
 }
 
 /**
- * Redact Secrets[].Match (plaintext secret values) from a trivy report JSON so
- * raw output never leaks secrets to the model/logs. Non-JSON text passes
+ * Redact plaintext secret values from a trivy report JSON so raw output never
+ * leaks secrets to the model/logs. Covers Secrets[].Match AND Secrets[].Code
+ * line Content/Highlighted (the matched source line trivy embeds), plus the
+ * whole Code block as a belt-and-suspenders guard. Non-JSON text passes
  * through unchanged (trivy --format json is always JSON, so this is a guard).
  */
 function redactReportSecrets(text: string): string {
@@ -353,8 +355,28 @@ function redactReportSecrets(text: string): string {
     let changed = false;
     for (const r of data.Results ?? []) {
       for (const s of r.Secrets ?? []) {
-        if (s.Match !== undefined) {
-          (s as { Match?: unknown }).Match = "[REDACTED]";
+        const rec = s as {
+          Match?: unknown;
+          Code?: {
+            Lines?: { Content?: unknown; Highlighted?: unknown }[];
+          };
+        };
+        if (rec.Match !== undefined) {
+          rec.Match = "[REDACTED]";
+          changed = true;
+        }
+        for (const line of rec.Code?.Lines ?? []) {
+          if (line.Content !== undefined) {
+            line.Content = "[REDACTED]";
+            changed = true;
+          }
+          if (line.Highlighted !== undefined) {
+            line.Highlighted = "[REDACTED]";
+            changed = true;
+          }
+        }
+        if (rec.Code !== undefined) {
+          rec.Code = { Lines: [{ Content: "[REDACTED]" }] };
           changed = true;
         }
       }
