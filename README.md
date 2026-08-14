@@ -34,7 +34,7 @@ Fix / Retry / Verify
 
 ## Planned plugins
 
-Implemented: ast-grep · Ruff · Biome · uv. Planned: act · Semgrep · Trivy · Docker · k6 · FFmpeg
+Implemented: ast-grep · Ruff · Biome · uv · act. Planned: Semgrep · Trivy · Docker · k6 · FFmpeg
 
 ## License
 
