@@ -175,6 +175,20 @@ describe("resolveActBinary", () => {
     }
   });
 
+  it("skips relative PATH entries (never yields a bare name)", () => {
+    const original = process.env.PATH;
+    try {
+      // join('.', 'act') === 'act' — a bare name. Relative entries must be
+      // skipped so a repo-planted act.exe cannot run via cwd-search.
+      process.env.PATH = ".";
+      const result = resolveActBinary();
+      expect(isAbsolute(result)).toBe(true);
+      expect(result).not.toBe("act");
+    } finally {
+      process.env.PATH = original;
+    }
+  });
+
   it("probes docker via an absolute path, never a bare name", async () => {
     const probes: string[] = [];
     const captureRunner: ExecutionRunner = async (req) => {
@@ -335,6 +349,63 @@ describe("act_run", () => {
     expect(result.error?.code).toBe("ToolFailure");
     expect(result.error?.message).toMatch(/failed/);
   });
+
+  it("keeps ok:true when output is truncated but the run passed", async () => {
+    const truncRunner: ExecutionRunner = async (req) => {
+      if (req.binary.toLowerCase().includes("docker")) {
+        return {
+          exitCode: 0,
+          stdout: "27.0.0",
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 1,
+        };
+      }
+      return {
+        exitCode: 0,
+        stdout: "huge log",
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: true,
+        durationMs: 1,
+      };
+    };
+    const result = await tool().execute({}, ctx(truncRunner));
+    expect(result.ok).toBe(true);
+    expect(result.summary).toBe("all workflows passed");
+  });
+
+  it("reports ToolFailure when output is truncated and the run failed", async () => {
+    const truncFailRunner: ExecutionRunner = async (req) => {
+      if (req.binary.toLowerCase().includes("docker")) {
+        return {
+          exitCode: 0,
+          stdout: "27.0.0",
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 1,
+        };
+      }
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: "boom",
+        timedOut: false,
+        aborted: false,
+        truncated: true,
+        durationMs: 1,
+      };
+    };
+    const result = await tool().execute({}, ctx(truncFailRunner));
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
+    expect(result.error?.message).toContain("10 MiB");
+  });
 });
 
 describe("act_run_job", () => {
@@ -442,8 +513,11 @@ describe("security model", () => {
     expect(captured!.args[0]).toBe("-C");
     expect(captured!.args[1]).toBe(workspaceRoot);
     expect(captured!.cwd).not.toBe(workspaceRoot);
-    expect(captured!.env?.HOME).toBeTruthy();
-    expect(captured!.env?.USERPROFILE).toBeTruthy();
+    // Fresh random runtime dir per invocation (mkdtemp) — not a predictable
+    // path an attacker could pre-plant in world-writable /tmp.
+    expect(captured!.cwd).toMatch(/dsh-act-runtime-/);
+    expect(captured!.env?.HOME).toBe(captured!.cwd);
+    expect(captured!.env?.USERPROFILE).toBe(captured!.cwd);
   });
 
   it("ignores a repo-planted .actrc end-to-end with real act", async () => {

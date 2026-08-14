@@ -26,7 +26,7 @@ import {
   type ToolContext,
   type ExecutionResult,
 } from "@dsh-forge/core";
-import { mkdirSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -48,12 +48,15 @@ const PLATFORM_FLAGS = [
   "ubuntu-20.04=catthehacker/ubuntu:act-20.04",
 ] as const;
 
-// Neutral runtime dir used as act's process cwd so a repo-controlled `.actrc`
-// in the workspace is never read (act loads .actrc from its cwd + home).
-const RUNTIME_DIR = join(tmpdir(), "dsh-act-runtime");
-
-function ensureRuntimeDir(): void {
-  mkdirSync(RUNTIME_DIR, { recursive: true });
+/**
+ * Create a fresh, random runtime dir used as act's process cwd + HOME so a
+ * repo-controlled `.actrc` in the workspace is never read (act loads .actrc
+ * from its cwd + home). A random dir per invocation (mkdtemp) also prevents a
+ * local attacker from pre-creating a predictable path in a world-writable
+ * /tmp and planting a malicious .actrc there (predictable-path TOCTOU).
+ */
+function runtimeDir(): string {
+  return mkdtempSync(join(tmpdir(), "dsh-act-runtime-"));
 }
 
 function invalid(message: string): ToolResult {
@@ -167,7 +170,7 @@ async function execAct(
 > {
   const binary = resolveActBinary();
   const timeoutMs = opts.timeoutMs ?? 300_000;
-  ensureRuntimeDir();
+  const runtime = runtimeDir();
   let exec: ExecutionResult;
   try {
     exec = await ctx.run({
@@ -176,8 +179,8 @@ async function execAct(
       // cannot inject flags, and HOME/USERPROFILE are neutralized so the
       // user/CI home `.actrc` is ignored too.
       args: ["-C", ctx.workspaceRoot, ...args],
-      cwd: RUNTIME_DIR,
-      env: { HOME: RUNTIME_DIR, USERPROFILE: RUNTIME_DIR },
+      cwd: runtime,
+      env: { HOME: runtime, USERPROFILE: runtime },
       timeoutMs,
       maxOutputBytes: 10 * 1024 * 1024,
     });
@@ -200,18 +203,15 @@ async function execAct(
       },
     };
   }
-  if (exec.truncated) {
+  // Truncation alone must NOT turn a passing run into a failure: the run tools
+  // interpret exitCode below. A truncated PASSING run stays ok:true (raw is
+  // already capped by the runner); only a truncated failing run fails here.
+  if (exec.truncated && exec.exitCode !== 0) {
     return {
       ok: false,
-      result: {
-        ok: false,
-        summary: "act output exceeded the output cap",
-        error: {
-          code: "ToolFailure",
-          message:
-            "act output exceeded the 10 MiB output cap; the result was truncated",
-        },
-      },
+      result: toolFailure(
+        `act output exceeded the 10 MiB cap and the run failed (exit code ${exec.exitCode})`,
+      ),
     };
   }
   if (exec.error) {

@@ -16,7 +16,7 @@
  *     runner maps to BinaryNotFound.
  */
 import { statSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
@@ -25,6 +25,10 @@ const IS_WINDOWS = process.platform === "win32";
 function resolveInPath(name: string): string | undefined {
   const candidates = IS_WINDOWS ? [`${name}.exe`, name] : [name];
   for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    // Skip relative entries: join('.', 'act') === 'act' — a bare name would
+    // let Windows CreateProcess search the harness cwd (the analyzed
+    // workspace) before PATH.
+    if (!isAbsolute(dir)) continue;
     for (const candidate of candidates) {
       try {
         const full = join(dir, candidate);
