@@ -142,9 +142,17 @@ const noShellExecRule = {
       if (callee.type === "Identifier") {
         return bindings.get(callee.name);
       }
-      if (callee.type === "MemberExpression" && callee.object.type === "Identifier") {
-        // plain or computed access on a namespace binding
-        if (!namespaces.has(callee.object.name)) return undefined;
+      if (callee.type === "MemberExpression") {
+        // object may be a namespace identifier, a plain require, or an
+        // inline createRequire(...)(...) chain resolving to child_process.
+        const object = callee.object;
+        let namespace = false;
+        if (object.type === "Identifier") {
+          namespace = namespaces.has(object.name);
+        } else if (object.type === "CallExpression") {
+          namespace = isRequireNamespaceCall(object);
+        }
+        if (!namespace) return undefined;
         if (!callee.computed && callee.property.type === "Identifier") {
           return callee.property.name;
         }
@@ -153,6 +161,52 @@ const noShellExecRule = {
         }
       }
       return undefined;
+    }
+
+    /**
+     * True when `expr` is a call that returns the child_process module:
+     * require("node:child_process"), a createRequire-bound local called
+     * with a child_process source, or an inline
+     * createRequire(import.meta.url)("node:child_process") chain.
+     * @param {import("estree").Expression} expr
+     */
+    function isRequireNamespaceCall(expr) {
+      if (expr.type !== "CallExpression") return false;
+      const c = expr.callee;
+      if (c.type === "Identifier") {
+        if (c.name === "require") {
+          return isChildProcessSource(expr.arguments[0]);
+        }
+        return requireFns.has(c.name) && isChildProcessSource(expr.arguments[0]);
+      }
+      if (c.type === "CallExpression") {
+        // inline createRequire(...)(...) producing a require function
+        const inner = c.callee;
+        return (
+          inner.type === "Identifier" &&
+          inner.name === "createRequire" &&
+          isChildProcessSource(expr.arguments[0])
+        );
+      }
+      return false;
+    }
+
+    /**
+     * Track mutations like `o.shell = true` on a tracked options object.
+     * @param {import("estree").AssignmentExpression} node
+     */
+    function trackOptionsMutation(node) {
+      const left = node.left;
+      if (
+        left.type === "MemberExpression" &&
+        left.object.type === "Identifier" &&
+        shellOpts.has(left.object.name) &&
+        left.property.type === "Identifier" &&
+        left.property.name === "shell"
+      ) {
+        const value = node.right.type === "Literal" ? node.right.value : "unknown";
+        shellOpts.set(left.object.name, value === false ? false : "unknown");
+      }
     }
 
     /** @param {import("estree").CallExpression} call */
@@ -164,13 +218,21 @@ const noShellExecRule = {
         return;
       }
       if (!SHELL_OPTIONAL.has(name)) return;
-      // Options may be the 2nd or 3rd argument: an inline object literal or a
-      // variable-held object literal (tracked above). Report when shell is
-      // not literally false.
+      // Options may be the 2nd or 3rd argument: an inline object literal (or
+      // spread of a tracked object), a variable-held object literal (tracked
+      // above), or any combination. Report when shell is not literally false.
       for (const arg of call.arguments) {
         if (!arg) continue;
         if (arg.type === "ObjectExpression") {
           for (const prop of arg.properties) {
+            if (prop.type === "SpreadElement") {
+              if (prop.argument.type === "Identifier" && shellOpts.has(prop.argument.name)) {
+                if (shellOpts.get(prop.argument.name) !== false) {
+                  context.report({ node: call, messageId: "shellTrue", data: { fn: name } });
+                }
+              }
+              continue;
+            }
             if (
               prop.type === "Property" &&
               !prop.computed &&
@@ -195,6 +257,7 @@ const noShellExecRule = {
     return {
       ImportDeclaration: trackBinding,
       VariableDeclaration: trackBinding,
+      AssignmentExpression: trackOptionsMutation,
       CallExpression: check,
     };
   },
