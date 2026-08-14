@@ -90,6 +90,47 @@ describe("ast_search", () => {
     expect(result.summary).toMatch(/0 match/);
   });
 
+  it("returns a summaryBlock (documented Result contract field)", async () => {
+    // The Result contract (PLUGIN_STANDARD.md) uses summaryBlock, not the
+    // legacy resultSummary; renderModelFacing reads summaryBlock.
+    const tool = astGrepPlugin.tools.find((t) => t.name === "ast_search")!;
+    const result = await tool.execute(
+      {
+        pattern: "transform($DATA, $CFG)",
+        language: "ts",
+        paths: ["fixtures/sample.ts"],
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summaryBlock).toBeDefined();
+    if (result.summaryBlock) {
+      expect(result.summaryBlock.count).toBeGreaterThan(0);
+    }
+  });
+
+  it("reports a Timeout error when the binary exceeds its timeout", async () => {
+    const tool = astGrepPlugin.tools.find((t) => t.name === "ast_search")!;
+    const timedOutCtx: ToolContext = {
+      workspaceRoot,
+      run: async () => ({
+        exitCode: null,
+        stdout: '[{"file":"a.ts","text":"x"}]',
+        stderr: "",
+        timedOut: true,
+        aborted: false,
+        truncated: false,
+        durationMs: 30_000,
+      }),
+    };
+    const result = await tool.execute(
+      { pattern: "foo($X)", language: "ts", paths: ["fixtures/sample.ts"] },
+      timedOutCtx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("Timeout");
+  });
+
   it("rejects invalid arguments", async () => {
     const tool = astGrepPlugin.tools.find((t) => t.name === "ast_search")!;
     const result = await tool.execute({ pattern: 123 }, ctx);
