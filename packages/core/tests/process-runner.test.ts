@@ -300,6 +300,44 @@ describe("runProcess", () => {
     expect(result.stdout.endsWith("END-OF-OUTPUT")).toBe(true);
     expect(result.stdout.length).toBe(65536 + "END-OF-OUTPUT".length);
   });
+
+  it("does not redact short common env values like '1'", async () => {
+    const result = await runProcess({
+      binary: NODE,
+      args: ["-e", "console.log('1 file changed, 0 insertions')"],
+      env: { FORCE_COLOR: "1" },
+    });
+    expect(result.stdout).toContain("1 file changed, 0 insertions");
+  });
+
+  it("does NOT redact a non-secret env value even when long (regression)", async () => {
+    const result = await runProcess({
+      binary: NODE,
+      args: ["-e", "console.log(process.env.NODE_ENV ?? 'missing')"],
+      env: { NODE_ENV: "production" },
+    });
+    expect(result.stdout.trim()).toBe("production");
+  });
+
+  it("redacts an env value under a sensitive key name", async () => {
+    const result = await runProcess({
+      binary: NODE,
+      args: ["-e", "console.log(process.env.DSH_TEST_TOKEN ?? 'missing')"],
+      env: { DSH_TEST_TOKEN: "tok-abcdef1234567890" },
+    });
+    expect(result.stdout).toContain("[REDACTED]");
+    expect(result.stdout).not.toContain("tok-abcdef1234567890");
+  });
+
+  it("honors autoRedact: false opt-out", async () => {
+    const result = await runProcess({
+      binary: NODE,
+      args: ["-e", "console.log(process.env.DSH_TEST_TOKEN ?? 'missing')"],
+      env: { DSH_TEST_TOKEN: "tok-abcdef1234567890" },
+      autoRedact: false,
+    });
+    expect(result.stdout.trim()).toBe("tok-abcdef1234567890");
+  });
 });
 
 /** True once the process with the given pid is no longer alive. */
