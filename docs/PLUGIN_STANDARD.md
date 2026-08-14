@@ -39,6 +39,56 @@ Each tool in `tools` is a `ToolDefinition`:
 | `system-change` | Changes outside the workspace (containers, installs) | DSH permission, explicit |
 | `destructive` | Irreversible destruction | DSH permission + destructive guard; avoid exposing |
 
+## Core type contract
+
+Every plugin is written against these shapes (enforced by `@dsh-forge/core`).
+
+`BinaryInfo` — detected upstream binary:
+
+- `name: string` — binary name (e.g. `sg`, `ruff`)
+- `path: string` — resolved absolute path
+- `version?: string` — reported version, when available
+- `source: "npm-package" | "path" | "detected"` — how it was resolved
+
+`ExecutionRequest` — how plugins execute binaries (via the core runner):
+
+- `binary: string`, `args: string[]` — binary + typed argv[]
+- `cwd?: string` — working directory
+- `env?: Record<string, string>` — explicit entries on top of the env allowlist
+- `timeoutMs?: number` — kill after this long
+- `signal?: AbortSignal` — cancellation
+- `maxOutputBytes?: number` — per-stream cap
+- `redact?: string[]` — secret values redacted from captured output
+
+`ExecutionResult` — outcome of an execution:
+
+- `exitCode: number | null`, `stdout: string`, `stderr: string`
+- `timedOut: boolean`, `aborted: boolean`, `truncated: boolean`
+- `durationMs: number`
+- `error?: { code: "BinaryNotFound" | "SpawnFailure"; message: string }`
+
+`Diagnostic` — normalized finding:
+
+- `tool: string`
+- `severity: "info" | "warning" | "error" | "critical"`
+- `rule?: string`, `file?: string`, `line?: number`, `column?: number`
+- `message: string`, `suggestion?: string`, `fixable?: boolean`
+
+`Capability` — what a plugin can do:
+
+- `name: string` — e.g. `ast-search:ts`
+- `description?: string`
+
+`MutationClass` — side-effect class of a tool:
+
+- `read | workspace-write | network | process | system-change | destructive`
+
+`PluginMetadata` — plugin identity:
+
+- `name`, `version`, `upstreamTool`
+- `coreContractVersion` (must equal `CORE_VERSION`)
+- `capabilities: Capability[]`
+
 ## Execution rules (binding)
 
 1. **No shell.** Arguments are typed values compiled to `argv[]`; `shell: true`
