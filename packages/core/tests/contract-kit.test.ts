@@ -79,6 +79,25 @@ function missingBinaryTool(): ToolDefinition {
   };
 }
 
+function brokenBinaryTool(): ToolDefinition {
+  return {
+    name: "probe_broken",
+    description: "Fails binary detection by returning ToolFailure",
+    mutationClass: "read",
+    inputSchema: { type: "object", properties: {} },
+    async execute() {
+      return {
+        ok: false,
+        summary: "something went wrong",
+        error: {
+          code: "ToolFailure",
+          message: "did not detect the missing binary",
+        },
+      };
+    },
+  };
+}
+
 function goodPlugin(): Plugin {
   return {
     metadata: {
@@ -155,6 +174,36 @@ describe("renderModelFacing", () => {
     expect(text).toContain("a.py:1");
     expect(text.split("\n").length).toBeLessThan(10);
   });
+
+  it("renders the documented summaryBlock field (PLUGIN_STANDARD.md)", () => {
+    const text = renderModelFacing({
+      ok: false,
+      summary: "3 findings",
+      summaryBlock: {
+        tool: "ruff",
+        count: 3,
+        bySeverity: { error: 1, warning: 2, info: 0, critical: 0 },
+        truncated: false,
+        topIssues: [
+          {
+            count: 2,
+            severity: "warning",
+            rule: "E501",
+            message: "line too long",
+          },
+          {
+            count: 1,
+            severity: "error",
+            rule: "F401",
+            message: "unused import",
+          },
+        ],
+      },
+    });
+    expect(text).toContain("findings: 3");
+    expect(text).toContain("E501");
+    expect(text).toContain("[warning]");
+  });
 });
 
 describe("runContractSuite", () => {
@@ -169,6 +218,7 @@ describe("runContractSuite", () => {
   it("passes for a conforming fixture plugin", async () => {
     const report = await runContractSuite(goodPlugin(), {
       workspaceRoot,
+      missingBinaryTool: "probe_missing",
       toolArgs: {
         echo_message: { valid: { message: "hello kit" }, invalid: { message: 1 } },
         probe_missing: { valid: {}, invalid: { unexpected: true } },
@@ -186,6 +236,7 @@ describe("runContractSuite", () => {
     plugin.tools = [echoTool(), echoTool()];
     const report = await runContractSuite(plugin, {
       workspaceRoot,
+      missingBinaryTool: "probe_missing",
       toolArgs: { echo_message: { valid: { message: "x" }, invalid: {} } },
     });
     expect(report.passed).toBe(false);
@@ -199,6 +250,7 @@ describe("runContractSuite", () => {
     plugin.metadata.coreContractVersion = "0.0.0-mismatch";
     const report = await runContractSuite(plugin, {
       workspaceRoot,
+      missingBinaryTool: "probe_missing",
       toolArgs: {
         echo_message: { valid: { message: "x" }, invalid: {} },
         probe_missing: { valid: {}, invalid: { x: 1 } },
@@ -222,6 +274,7 @@ describe("runContractSuite", () => {
     plugin.tools = [lenient];
     const report = await runContractSuite(plugin, {
       workspaceRoot,
+      missingBinaryTool: "probe_missing",
       toolArgs: {
         echo_lenient: { valid: { message: "x" }, invalid: { message: 1 } },
       },
@@ -229,6 +282,27 @@ describe("runContractSuite", () => {
     expect(report.passed).toBe(false);
     expect(
       report.checks.some((c) => !c.passed && /invalid args/i.test(c.name)),
+    ).toBe(true);
+  });
+
+  it("fails when a plugin's binary-missing tool does not return BinaryNotFound", async () => {
+    // The kit must detect a plugin that fails to implement binary detection
+    // (e.g. returns ToolFailure instead of BinaryNotFound).
+    const plugin: Plugin = {
+      metadata: { ...goodPlugin().metadata },
+      tools: [echoTool(), brokenBinaryTool()],
+    };
+    const report = await runContractSuite(plugin, {
+      workspaceRoot,
+      missingBinaryTool: "probe_broken",
+      toolArgs: {
+        echo_message: { valid: { message: "x" }, invalid: {} },
+        probe_broken: { valid: {}, invalid: { x: 1 } },
+      },
+    });
+    expect(report.passed).toBe(false);
+    expect(
+      report.checks.some((c) => !c.passed && /binary-missing/i.test(c.name)),
     ).toBe(true);
   });
 });
