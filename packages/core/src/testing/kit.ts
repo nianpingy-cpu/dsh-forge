@@ -8,12 +8,18 @@
  */
 import { CORE_VERSION } from "../index.js";
 import { runProcess } from "../process/runner.js";
+import type { ExecutionRequest, ExecutionResult } from "../process/runner.js";
 import {
   type Plugin,
   type ToolContext,
   type ToolDefinition,
   type ToolResult,
 } from "../plugin/types.js";
+
+/** Signature of the core process runner, injectable for deterministic tests. */
+export type ExecutionRunner = (
+  request: ExecutionRequest,
+) => Promise<ExecutionResult>;
 
 export interface ContractCheck {
   name: string;
@@ -35,10 +41,19 @@ export interface ContractSuiteOptions {
   workspaceRoot: string;
   /**
    * Name of a tool that must return BinaryNotFound when its binary is
-   * absent. The kit executes it and asserts the normalized error code, so a
-   * plugin that fails to implement binary detection is caught here.
+   * absent. The kit runs it against a mock runner that reports BinaryNotFound
+   * and asserts the tool (a) actually invoked ctx.run and (b) mapped the
+   * runner condition to the normalized BinaryNotFound error — so a plugin
+   * that fails to implement binary detection is caught, and real plugins
+   * wrapping installed binaries can pass deterministically.
    */
   missingBinaryTool: string;
+  /**
+   * Override the process runner used for the tool execution checks (defaults
+   * to the real runProcess). Plugins may inject a mock to test tools without
+   * depending on real binaries/environment.
+   */
+  runner?: ExecutionRunner;
   /** Per-tool valid/invalid argument samples used by execution checks. */
   toolArgs: Record<string, ToolArgsSpec>;
 }
@@ -95,7 +110,7 @@ export async function runContractSuite(
   const checks: ContractCheck[] = [];
   const ctx: ToolContext = {
     workspaceRoot: options.workspaceRoot,
-    run: runProcess,
+    run: options.runner ?? runProcess,
   };
 
   // 1. plugin loads
@@ -230,10 +245,14 @@ export async function runContractSuite(
     }
   }
 
-  // 9. binary-missing path returns BinaryNotFound. The kit actually runs the
-  //    designated probe tool and asserts the normalized error code, so a
-  //    plugin that fails to implement binary detection (ToolFailure, throw,
-  //    ...) is caught instead of only checking a declared metadata string.
+  // 9. binary-missing path returns BinaryNotFound. The kit runs the
+  //    designated probe tool against a MOCK runner that reports
+  //    BinaryNotFound for every request, and asserts that the tool
+  //    (a) actually invoked ctx.run (proving it executes binaries through
+  //    the runner rather than hardcoding the error) and (b) mapped the
+  //    runner's condition to the normalized BinaryNotFound error. This is
+  //    deterministic for real plugins wrapping installed binaries and still
+  //    catches plugins that fail to implement binary detection.
   const probe = plugin.tools.find((t) => t.name === options.missingBinaryTool);
   if (!probe) {
     checks.push(
@@ -244,15 +263,39 @@ export async function runContractSuite(
       ),
     );
   } else {
+    let runnerInvoked = false;
+    const missingBinaryCtx: ToolContext = {
+      workspaceRoot: options.workspaceRoot,
+      run: async (request) => {
+        runnerInvoked = true;
+        return {
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 0,
+          error: {
+            code: "BinaryNotFound",
+            message: `mock runner: binary not found: ${request.binary}`,
+          },
+        };
+      },
+    };
     try {
-      const probeResult = await probe.execute({}, ctx);
+      const probeResult = await probe.execute({}, missingBinaryCtx);
       const detected =
-        probeResult.ok === false && probeResult.error?.code === "BinaryNotFound";
+        runnerInvoked &&
+        probeResult.ok === false &&
+        probeResult.error?.code === "BinaryNotFound";
       checks.push(
         check(
           "binary-missing path returns BinaryNotFound",
           detected,
-          `got ok=${String(probeResult.ok)}, error=${String(probeResult.error?.code)}`,
+          runnerInvoked
+            ? `got ok=${String(probeResult.ok)}, error=${String(probeResult.error?.code)}`
+            : "tool never invoked ctx.run (hardcoded result, not real binary detection)",
         ),
       );
     } catch (err) {
