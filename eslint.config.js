@@ -10,11 +10,11 @@ import tseslint from "typescript-eslint";
  * - exec/execSync bound to `node:child_process` (always run through a shell) → error
  *
  * The rule is binding-aware: it only reports calls whose callee resolves to a
- * `node:child_process` import (named, aliased, namespace, or require
- * destructuring), so locally-defined functions named `exec` are never flagged
- * and member-expression / aliased-import bypasses are caught. Two earlier
- * versions (an esquery selector and a plain-name visitor) were found by
- * external review of PR #31 to be no-ops or bypassable.
+ * `node:child_process` import (named, aliased, namespace, plain/computed
+ * member access, require destructuring, or createRequire), so locally-defined
+ * functions named `exec` are never flagged and bypass forms are caught.
+ * A variable-held options object literal is tracked for `shell` as well.
+ * Earlier no-op/bypassable versions were found by external review of PR #31.
  */
 const noShellExecRule = {
   meta: {
@@ -29,10 +29,28 @@ const noShellExecRule = {
   create(context) {
     const SHELL_OPTIONAL = new Set(["spawn", "spawnSync", "execFile", "execFileSync"]);
     const ALWAYS_SHELL = new Set(["exec", "execSync"]);
+    const CP = new Set(["node:child_process", "child_process"]);
+
     /** @type {Map<string,string>} local name -> imported child_process name */
     const bindings = new Map();
-    /** @type {Set<string>} local names bound to the child_process namespace */
+    /** @type {Set<string>} local names bound to the child_process module */
     const namespaces = new Set();
+    /** @type {Set<string>} local names that are require functions */
+    const requireFns = new Set();
+    /** @type {Map<string,boolean|"unknown">} options var -> shell value */
+    const shellOpts = new Map();
+
+    /** Check whether an expression string-literal-equals one of CP sources. */
+    /** @param {unknown} expr */
+    function isChildProcessSource(expr) {
+      return (
+        expr != null &&
+        typeof expr === "object" &&
+        /** @type {import("estree").Literal | undefined} */ (expr).type === "Literal" &&
+        typeof /** @type {import("estree").Literal} */ (expr).value === "string" &&
+        CP.has(String(/** @type {import("estree").Literal} */ (expr).value))
+      );
+    }
 
     /**
      * @param {import("estree").ImportDeclaration | import("estree").VariableDeclaration} node
@@ -41,7 +59,7 @@ const noShellExecRule = {
       if (
         node.type === "ImportDeclaration" &&
         typeof node.source.value === "string" &&
-        (node.source.value === "node:child_process" || node.source.value === "child_process")
+        CP.has(node.source.value)
       ) {
         for (const spec of node.specifiers) {
           if (spec.type === "ImportSpecifier" && spec.imported.type === "Identifier") {
@@ -51,26 +69,67 @@ const noShellExecRule = {
           }
         }
       }
-      if (node.type === "VariableDeclaration") {
-        for (const decl of node.declarations) {
-          const init = decl.init;
-          if (
-            init &&
-            init.type === "CallExpression" &&
-            init.callee.type === "Identifier" &&
-            init.callee.name === "require" &&
-            init.arguments[0] &&
-            init.arguments[0].type === "Literal" &&
-            (init.arguments[0].value === "node:child_process" ||
-              init.arguments[0].value === "child_process") &&
-            decl.id.type === "ObjectPattern"
-          ) {
-            for (const prop of decl.id.properties) {
-              if (prop.type === "Property" && prop.key.type === "Identifier") {
-                const local =
-                  prop.value.type === "Identifier" ? prop.value.name : undefined;
-                if (local) bindings.set(local, prop.key.name);
-              }
+      if (node.type !== "VariableDeclaration") return;
+      for (const decl of node.declarations) {
+        const init = decl.init;
+        if (!init) continue;
+
+        // const opts = { shell: true }  (also shell: someExpr => "unknown")
+        if (
+          init.type === "ObjectExpression" &&
+          decl.id.type === "Identifier"
+        ) {
+          for (const prop of init.properties) {
+            if (
+              prop.type === "Property" &&
+              !prop.computed &&
+              prop.key.type === "Identifier" &&
+              prop.key.name === "shell"
+            ) {
+              const value =
+                prop.value.type === "Literal" ? prop.value.value : "unknown";
+              shellOpts.set(decl.id.name, value === false ? false : "unknown");
+            }
+          }
+        }
+
+        // const req = createRequire(import.meta.url)
+        if (
+          init.type === "CallExpression" &&
+          init.callee.type === "Identifier" &&
+          init.callee.name === "createRequire" &&
+          decl.id.type === "Identifier"
+        ) {
+          requireFns.add(decl.id.name);
+          continue;
+        }
+
+        // requireFn = require | createRequire-bound local
+        const isRequireCall =
+          init.type === "CallExpression" &&
+          ((init.callee.type === "Identifier" && init.callee.name === "require") ||
+            (init.callee.type === "Identifier" && requireFns.has(init.callee.name)));
+
+        // const cp = require("node:child_process")  -> namespace
+        if (
+          isRequireCall &&
+          isChildProcessSource(init.arguments[0]) &&
+          decl.id.type === "Identifier"
+        ) {
+          namespaces.add(decl.id.name);
+          continue;
+        }
+
+        // const { exec } = require("node:child_process")  -> bindings
+        if (
+          isRequireCall &&
+          isChildProcessSource(init.arguments[0]) &&
+          decl.id.type === "ObjectPattern"
+        ) {
+          for (const prop of decl.id.properties) {
+            if (prop.type === "Property" && prop.key.type === "Identifier") {
+              const local = prop.value.type === "Identifier" ? prop.value.name : undefined;
+              if (local) bindings.set(local, prop.key.name);
             }
           }
         }
@@ -87,14 +146,15 @@ const noShellExecRule = {
       if (callee.type === "Identifier") {
         return bindings.get(callee.name);
       }
-      if (
-        callee.type === "MemberExpression" &&
-        !callee.computed &&
-        callee.object.type === "Identifier" &&
-        namespaces.has(callee.object.name) &&
-        callee.property.type === "Identifier"
-      ) {
-        return callee.property.name;
+      if (callee.type === "MemberExpression" && callee.object.type === "Identifier") {
+        // plain or computed access on a namespace binding
+        if (!namespaces.has(callee.object.name)) return undefined;
+        if (!callee.computed && callee.property.type === "Identifier") {
+          return callee.property.name;
+        }
+        if (callee.computed && callee.property.type === "Literal") {
+          return String(callee.property.value);
+        }
       }
       return undefined;
     }
@@ -108,23 +168,29 @@ const noShellExecRule = {
         return;
       }
       if (!SHELL_OPTIONAL.has(name)) return;
-      // Options may be the 2nd or 3rd argument. Scan every object argument
-      // for a `shell` key: literal `true` or any non-literal value is
-      // reported (unknown shell mode is treated as unsafe).
+      // Options may be the 2nd or 3rd argument: an inline object literal or a
+      // variable-held object literal (tracked above). Report when shell is
+      // not literally false.
       for (const arg of call.arguments) {
-        if (!arg || arg.type !== "ObjectExpression") continue;
-        for (const prop of arg.properties) {
-          if (
-            prop.type === "Property" &&
-            !prop.computed &&
-            prop.key.type === "Identifier" &&
-            prop.key.name === "shell"
-          ) {
-            const isLiteralFalse =
-              prop.value.type === "Literal" && prop.value.value === false;
-            if (!isLiteralFalse) {
-              context.report({ node: call, messageId: "shellTrue", data: { fn: name } });
+        if (!arg) continue;
+        if (arg.type === "ObjectExpression") {
+          for (const prop of arg.properties) {
+            if (
+              prop.type === "Property" &&
+              !prop.computed &&
+              prop.key.type === "Identifier" &&
+              prop.key.name === "shell"
+            ) {
+              const isLiteralFalse =
+                prop.value.type === "Literal" && prop.value.value === false;
+              if (!isLiteralFalse) {
+                context.report({ node: call, messageId: "shellTrue", data: { fn: name } });
+              }
             }
+          }
+        } else if (arg.type === "Identifier" && shellOpts.has(arg.name)) {
+          if (shellOpts.get(arg.name) !== false) {
+            context.report({ node: call, messageId: "shellTrue", data: { fn: name } });
           }
         }
       }
