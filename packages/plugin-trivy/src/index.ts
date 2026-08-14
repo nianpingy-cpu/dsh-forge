@@ -29,6 +29,9 @@ import {
   type Diagnostic,
   type Severity,
 } from "@dsh-forge/core";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resolveTrivyBinary, TRIVY_BINARY_HINT } from "./binary.js";
 
 const TOOL = "trivy";
@@ -120,10 +123,16 @@ async function runTrivy(
   | { ok: false; result: ToolResult }
 > {
   const binary = resolveTrivyBinary();
+  // Run trivy from a fresh random runtime dir (never the workspace cwd): trivy
+  // reads .trivyignore/.trivyignore.yaml from its process working directory,
+  // so a repo-planted ignore file could silently suppress findings. Targets
+  // are always absolute (or remote URLs), so the neutral cwd does not affect
+  // what is scanned.
+  const runtime = mkdtempSync(join(tmpdir(), "dsh-trivy-runtime-"));
   const execution = await ctx.run({
     binary,
     args: [...args],
-    cwd: ctx.workspaceRoot,
+    cwd: runtime,
     timeoutMs: 300_000,
     maxOutputBytes: 20 * 1024 * 1024,
   });

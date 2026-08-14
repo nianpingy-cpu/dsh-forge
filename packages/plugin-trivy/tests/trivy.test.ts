@@ -332,6 +332,27 @@ describe("trivy_secret_scan", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("InvalidArguments");
   });
+
+  it("runs trivy from a neutral runtime cwd (repo .trivyignore cannot suppress findings)", async () => {
+    let captured: ExecutionRequest | undefined;
+    const captureRunner: ExecutionRunner = async (req) => {
+      captured = req;
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({ Results: [] }),
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      };
+    };
+    const result = await tool().execute({ path: "secrets" }, ctx(captureRunner));
+    expect(result.ok).toBe(true);
+    expect(captured).toBeTruthy();
+    expect(captured!.cwd).not.toBe(workspaceRoot);
+    expect(captured!.cwd).toMatch(/dsh-trivy-runtime-/);
+  });
 });
 
 describe("trivy_image_scan", () => {
