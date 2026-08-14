@@ -9,3 +9,5 @@ export const CORE_VERSION = "0.1.0" as const;
 export * from "./process/runner.js";
 export * from "./diagnostics/types.js";
 export * from "./workspace/policy.js";
+export * from "./plugin/types.js";
+export * from "./testing/kit.js";
