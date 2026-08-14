@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { validateManifest } from "../scripts/verify-upstream";
+import { validateManifest } from "../scripts/verify-upstream.js";
 
 const validManifest = {
   repository: "deepseek-ai/deepseek-harness",

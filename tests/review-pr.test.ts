@@ -12,7 +12,7 @@ import {
   type ReviewInput,
   type ReviewResponse,
   type ReviewerConfig,
-} from "../scripts/review-pr";
+} from "../scripts/review-pr.js";
 
 const validResponse: ReviewResponse = {
   verdict: "approve",

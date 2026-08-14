@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -482,9 +482,18 @@ function gh(args: string): string {
  */
 export function gatherPRInput(pr: number, cwd = process.cwd()): ReviewInput {
   const prJson = JSON.parse(
-    gh(`pr view ${pr} --json title,body,baseRefOid,headRefOid`),
-  ) as { title: string; body: string; baseRefOid: string; headRefOid: string };
+    gh(`pr view ${pr} --json title,body,baseRefOid,headRefOid,commits`),
+  ) as {
+    title: string;
+    body: string;
+    baseRefOid: string;
+    headRefOid: string;
+    commits: { oid: string; messageHeadline: string }[];
+  };
   const diff = gh(`pr diff ${pr}`);
+  const commits = prJson.commits.map(
+    (c) => `${c.oid.slice(0, 7)} ${c.messageHeadline.split("\n")[0] ?? ""}`,
+  );
   const changedFiles = diff
     .split("\n")
     .filter((l) => l.startsWith("+++ b/"))
@@ -508,11 +517,30 @@ export function gatherPRInput(pr: number, cwd = process.cwd()): ReviewInput {
     readFileSync(join(cwd, "compatibility/deepseek-harness.json"), "utf8"),
   );
 
+  // Key deliverables that may exist in the base (so the reviewer can tell a
+  // missing file apart from a file present outside the PR diff).
+  const KEY_DELIVERABLES = [
+    "LICENSE",
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "AGENTS.md",
+    "package.json",
+    "pnpm-workspace.yaml",
+    "tsconfig.json",
+    "PROJECT_STATUS.md",
+  ];
+  const repoDeliverables = KEY_DELIVERABLES.filter((f) =>
+    existsSync(join(cwd, f)),
+  ).map((f) => `present: ${f}`);
+
   return {
     prNumber: pr,
     issue,
     baseCommit: prJson.baseRefOid,
     headCommit: prJson.headRefOid,
+    commits,
+    repoDeliverables,
     diff: diff.slice(0, 60_000),
     changedFiles,
     testSummary:
