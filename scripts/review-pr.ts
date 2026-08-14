@@ -149,6 +149,34 @@ export type ValidationOutcome =
   | { ok: true; value: ReviewResponse }
   | { ok: false; error: string };
 
+/** Render a finding entry as a readable string, preserving nested objects. */
+function stringifyFinding(entry: unknown): string {
+  if (typeof entry === "string") return entry;
+  if (entry === null || entry === undefined) return "(empty finding)";
+  // Prefer common human-readable fields, then fall back to full JSON so no
+  // information is lost (never collapse to "[object Object]").
+  if (typeof entry === "object") {
+    const record = entry as Record<string, unknown>;
+    const preferred =
+      record.issue ?? record.finding ?? record.description ?? record.message ?? record.suggestion;
+    if (typeof preferred === "string" && preferred.trim() !== "") {
+      const context = { ...record };
+      delete context.issue;
+      delete context.finding;
+      delete context.description;
+      delete context.message;
+      delete context.suggestion;
+      const rest = Object.entries(context);
+      if (rest.length > 0) {
+        return `${preferred} (${rest.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})`;
+      }
+      return preferred;
+    }
+    return JSON.stringify(entry);
+  }
+  return String(entry);
+}
+
 /** Validate/extract a reviewer's JSON response. */
 export function validateReviewResponse(text: string): ValidationOutcome {
   let candidate = text.trim();
@@ -181,12 +209,12 @@ export function validateReviewResponse(text: string): ValidationOutcome {
     ok: true,
     value: {
       verdict: r.verdict,
-      blocking: (r.blocking as unknown[]).map(String),
-      non_blocking: (r.non_blocking as unknown[]).map(String),
-      security: (r.security as unknown[]).map(String),
-      test_gaps: (r.test_gaps as unknown[]).map(String),
-      compatibility: (r.compatibility as unknown[]).map(String),
-      architecture: (r.architecture as unknown[]).map(String),
+      blocking: (r.blocking as unknown[]).map(stringifyFinding),
+      non_blocking: (r.non_blocking as unknown[]).map(stringifyFinding),
+      security: (r.security as unknown[]).map(stringifyFinding),
+      test_gaps: (r.test_gaps as unknown[]).map(stringifyFinding),
+      compatibility: (r.compatibility as unknown[]).map(stringifyFinding),
+      architecture: (r.architecture as unknown[]).map(stringifyFinding),
       confidence: typeof r.confidence === "number" ? r.confidence : 0,
     },
   };
