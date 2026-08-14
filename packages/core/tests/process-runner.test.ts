@@ -1,5 +1,10 @@
 import { describe, expect, it, afterAll } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -40,7 +45,11 @@ describe("runProcess", () => {
       timeoutMs: 300,
     });
     expect(result.timedOut).toBe(true);
-    expect(result.exitCode).toBe(null);
+    // A killed process reports a platform-specific exit code: null under
+    // POSIX SIGKILL, 1 under Windows taskkill /F. The meaningful contract is
+    // that the promise resolves with timedOut=true (no hang) and the process
+    // is actually terminated (verified by the process-tree test below).
+    expect(result.exitCode === null || result.exitCode !== 0).toBe(true);
   });
 
   it("supports AbortSignal cancellation", async () => {
@@ -144,7 +153,84 @@ describe("runProcess", () => {
       /dsh-forge-definitely-missing-binary-xyz/,
     );
   });
+
+  // ---- regression: timeout/abort hardening flagged by review of PR #33 ----
+
+  it("resolves even when the child ignores SIGTERM (SIGKILL escalation)", async () => {
+    // The child traps SIGTERM and never exits on its own; without escalation
+    // runProcess would hang forever.
+    const result = await runProcess({
+      binary: NODE,
+      args: [
+        "-e",
+        "process.on('SIGTERM', () => {}); setTimeout(() => {}, 60000)",
+      ],
+      timeoutMs: 300,
+      signal: undefined,
+    });
+    expect(result.timedOut).toBe(true);
+    // The promise must have resolved within a bounded window (grace + slack).
+  });
+
+  it("kills grandchild processes on timeout (process tree)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dsh-tree-"));
+    const pidFile = join(dir, "grandchild.pid");
+    const parentScript = `
+      const { spawn } = require("node:child_process");
+      const fs = require("node:fs");
+      const child = spawn(process.execPath, [
+        "-e",
+        'require("fs").writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => {}, 60000)',
+        ${JSON.stringify(pidFile)},
+      ], { stdio: "ignore" });
+      setTimeout(() => {}, 60000);
+    `;
+    try {
+      await runProcess({ binary: NODE, args: ["-e", parentScript], timeoutMs: 0 });
+      // wait for the grandchild to record its pid
+      const deadline = Date.now() + 5000;
+      while (!existsSync(pidFile) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(existsSync(pidFile)).toBe(true);
+      const grandchildPid = Number(readFileSync(pidFile, "utf8"));
+      expect(Number.isFinite(grandchildPid)).toBe(true);
+
+      // Now run a timeout that should kill the whole tree (parent + grandchild).
+      const result = await runProcess({
+        binary: NODE,
+        args: ["-e", parentScript],
+        timeoutMs: 300,
+      });
+      expect(result.timedOut).toBe(true);
+
+      // grandchild must be gone shortly after
+      const gone = await waitUntilNotAlive(grandchildPid, 5000);
+      expect(gone).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
+
+/** True once the process with the given pid is no longer alive. */
+async function waitUntilNotAlive(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return !isAlive(pid);
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 describe("buildEnv", () => {
   it("keeps only allowlisted inherited variables plus explicit entries", () => {
