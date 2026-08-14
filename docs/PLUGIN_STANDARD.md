@@ -62,11 +62,28 @@ Each tool in `tools` is a `ToolDefinition`:
 - `ok: boolean`
 - `summary: string` — compact model-facing text
 - `diagnostics?: Diagnostic[]` — normalized findings
-- `summaryBlock?: ResultSummary` — for large diagnostic sets
+- `resultSummary?: ResultSummary` — for large diagnostic sets
 - `raw?: string` — capped raw output (reference only)
 - `error?: { code: string; message: string }` — normalized, e.g.
   `BinaryNotFound`, `InvalidArguments`, `Timeout`, `WorkspaceViolation`,
   `PermissionDenied`, `ToolFailure`
+
+`Diagnostic` fields:
+
+- `tool: string` — upstream tool family (e.g. `ruff`, `ast-grep`)
+- `severity: "info" | "warning" | "error" | "critical"`
+- `rule?: string` — rule id
+- `file?: string`, `line?: number`, `column?: number` — location
+- `message: string` — human-readable finding
+- `suggestion?: string`, `fixable?: boolean`
+
+`ResultSummary`:
+
+- `count: number` — total findings
+- `bySeverity: { info, warning, error, critical }` — counts per severity
+- `topIssues: TopIssue[]` — most common findings
+- `truncated: boolean` — true when the set was compressed
+- `rawRef?: string` — reference to the raw output
 
 ## Test requirements
 
