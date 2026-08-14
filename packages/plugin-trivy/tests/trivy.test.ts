@@ -228,6 +228,45 @@ describe("trivy_config_scan", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("WorkspaceViolation");
   });
+
+  it("rejects a leading-dash path (flag injection)", async () => {
+    const result = await tool().execute(
+      { path: "--cache-dir=outside" },
+      ctx(trivyRunner),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("maps trivy severities explicitly (MEDIUM->warning, LOW->info, UNKNOWN->info)", async () => {
+    const report = JSON.stringify({
+      Results: [
+        {
+          Target: "x",
+          Misconfigurations: [
+            { ID: "M", Severity: "MEDIUM", Title: "medium one" },
+            { ID: "L", Severity: "LOW", Title: "low one" },
+          ],
+          Licenses: [{ Name: "MIT", Severity: "UNKNOWN", PkgName: "p" }],
+        },
+      ],
+    });
+    const mock: ExecutionRunner = async () => ({
+      exitCode: 0,
+      stdout: report,
+      stderr: "",
+      timedOut: false,
+      aborted: false,
+      truncated: false,
+      durationMs: 1,
+    });
+    const result = await tool().execute({ path: "config" }, ctx(mock));
+    expect(result.ok).toBe(true);
+    const diags = result.diagnostics ?? [];
+    expect(diags[0]!.severity).toBe("warning"); // MEDIUM
+    expect(diags[1]!.severity).toBe("info"); // LOW
+    expect(diags[2]!.severity).toBe("info"); // UNKNOWN license
+  });
 });
 
 describe("trivy_secret_scan", () => {
@@ -277,6 +316,12 @@ describe("trivy_secret_scan", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("WorkspaceViolation");
   });
+
+  it("rejects a leading-dash path (flag injection)", async () => {
+    const result = await tool().execute({ path: "--exit-code=1" }, ctx(trivyRunner));
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
 });
 
 describe("trivy_image_scan", () => {
@@ -320,6 +365,15 @@ describe("trivy_sbom", () => {
     const result = await tool().execute({ path: "sbom" }, ctx(trivyRunner, false));
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("PermissionDenied");
+  });
+
+  it("rejects a leading-dash path (flag injection)", async () => {
+    const result = await tool().execute(
+      { path: "--format=table" },
+      ctx(trivyRunner),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
   });
 });
 

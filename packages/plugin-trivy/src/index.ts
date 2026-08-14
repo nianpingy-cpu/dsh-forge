@@ -27,6 +27,7 @@ import {
   type ToolResult,
   type ToolContext,
   type Diagnostic,
+  type Severity,
 } from "@dsh-forge/core";
 import { resolveTrivyBinary, TRIVY_BINARY_HINT } from "./binary.js";
 
@@ -224,6 +225,37 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() !== "" ? v : undefined;
 }
 
+/**
+ * Explicit trivy severity mapping. trivy emits CRITICAL/HIGH/MEDIUM/LOW/
+ * UNKNOWN, which core normalizeSeverity would otherwise collapse to 'error';
+ * this keeps a LOW vuln distinguishable from a HIGH one and maps UNKNOWN
+ * (common in license reports) to info.
+ */
+function trivySeverity(input: unknown): Severity {
+  if (typeof input === "string") {
+    switch (input.trim().toUpperCase()) {
+      case "CRITICAL":
+        return "critical";
+      case "HIGH":
+        return "error";
+      case "MEDIUM":
+        return "warning";
+      case "LOW":
+        return "info";
+      case "UNKNOWN":
+        return "info";
+      default:
+        return normalizeSeverity(input);
+    }
+  }
+  return normalizeSeverity(input);
+}
+
+/** Reject empty or leading-dash path inputs (flag injection). */
+function isValidPathInput(path: unknown): path is string {
+  return typeof path === "string" && path !== "" && !/^\s*-/.test(path);
+}
+
 function parseReport(run: {
   ok: true;
   stdout: string;
@@ -252,7 +284,7 @@ function findingsToDiagnostics(
     for (const v of r.Vulnerabilities ?? []) {
       out.push(
         toDiagnostic(TOOL, {
-          severity: normalizeSeverity(v.Severity),
+          severity: trivySeverity(v.Severity),
           rule: str(v.VulnerabilityID)
             ? `vuln:${str(v.VulnerabilityID)}`
             : `vuln:${type}`,
@@ -268,7 +300,7 @@ function findingsToDiagnostics(
     for (const m of r.Misconfigurations ?? []) {
       out.push(
         toDiagnostic(TOOL, {
-          severity: normalizeSeverity(m.Severity),
+          severity: trivySeverity(m.Severity),
           rule: str(m.ID) ? `misconfig:${str(m.ID)}` : `misconfig:${type}`,
           file,
           line:
@@ -283,7 +315,7 @@ function findingsToDiagnostics(
     for (const s of r.Secrets ?? []) {
       out.push(
         toDiagnostic(TOOL, {
-          severity: normalizeSeverity(s.Severity),
+          severity: trivySeverity(s.Severity),
           rule: str(s.RuleID) ? `secret:${str(s.RuleID)}` : `secret:${type}`,
           file,
           line: num(s.StartLine),
@@ -297,7 +329,7 @@ function findingsToDiagnostics(
     for (const l of r.Licenses ?? []) {
       out.push(
         toDiagnostic(TOOL, {
-          severity: normalizeSeverity(l.Severity),
+          severity: trivySeverity(l.Severity),
           rule: str(l.Name) ? `license:${str(l.Name)}` : `license:${type}`,
           file,
           message: `license ${str(l.Name) ?? "?"} on ${str(l.PkgName) ?? "?"}`,
@@ -477,8 +509,8 @@ const trivyConfigScan: ToolDefinition = {
       return permissionDenied();
     }
     const { path } = validated.value as { path: string };
-    if (typeof path !== "string" || path === "") {
-      return invalid("path must be a non-empty string");
+    if (!isValidPathInput(path)) {
+      return invalid("path must be a non-empty workspace path");
     }
     const resolved = resolveInsideWorkspace(ctx.workspaceRoot, path);
     if (!resolved.ok) return resolved.result;
@@ -514,8 +546,8 @@ const trivySecretScan: ToolDefinition = {
     const validated = validateArgs(this.inputSchema, args);
     if (!validated.ok) return invalid(validated.error);
     const { path } = validated.value as { path: string };
-    if (typeof path !== "string" || path === "") {
-      return invalid("path must be a non-empty string");
+    if (!isValidPathInput(path)) {
+      return invalid("path must be a non-empty workspace path");
     }
     const resolved = resolveInsideWorkspace(ctx.workspaceRoot, path);
     if (!resolved.ok) return resolved.result;
@@ -607,8 +639,8 @@ const trivySbom: ToolDefinition = {
       return permissionDenied();
     }
     const { path } = validated.value as { path: string };
-    if (typeof path !== "string" || path === "") {
-      return invalid("path must be a non-empty string");
+    if (!isValidPathInput(path)) {
+      return invalid("path must be a non-empty workspace path");
     }
     const resolved = resolveInsideWorkspace(ctx.workspaceRoot, path);
     if (!resolved.ok) return resolved.result;
