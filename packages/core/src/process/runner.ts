@@ -265,6 +265,12 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
       if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
       if (closeGraceTimer !== undefined) clearTimeout(closeGraceTimer);
       if (signal) signal.removeEventListener("abort", onAbort);
+      // Release the capture pipes so no fd/handle leaks and the event loop
+      // is not kept alive by a descendant holding the read ends. On the
+      // normal path 'close' has already closed them (destroy is a no-op); on
+      // the deadline path this is the only thing that frees them.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
       const apply = (state: CaptureState): string =>
         redactList.length > 0 ? redactSecrets(state.data, redactList) : state.data;
       resolve({
