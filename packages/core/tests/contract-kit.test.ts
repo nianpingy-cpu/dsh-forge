@@ -112,6 +112,60 @@ function goodPlugin(): Plugin {
   };
 }
 
+/** A realistic plugin tool: runs an installed binary via ctx.run and maps
+ * BinaryNotFound. A real plugin wrapping an installed binary looks like this,
+ * and it must be able to pass the binary-missing check when the kit injects a
+ * mock runner that simulates a missing binary. */
+function realProbeTool(): ToolDefinition {
+  return {
+    name: "probe_real",
+    description: "Runs its real upstream binary; maps BinaryNotFound",
+    mutationClass: "read",
+    inputSchema: { type: "object", properties: {} },
+    async execute(args, ctx) {
+      const validated = validateArgs(this.inputSchema, args);
+      if (!validated.ok) {
+        return invalidArgs(validated.error);
+      }
+      const result = await ctx.run({
+        binary: NODE,
+        args: ["-e", "0"],
+        cwd: ctx.workspaceRoot,
+      });
+      if (result.error?.code === "BinaryNotFound") {
+        return {
+          ok: false,
+          summary: "binary missing",
+          error: { code: "BinaryNotFound", message: result.error.message },
+        };
+      }
+      return {
+        ok: result.exitCode === 0,
+        summary: "probe ok",
+        raw: result.stdout,
+      };
+    },
+  };
+}
+
+/** A stub that returns BinaryNotFound WITHOUT ever invoking ctx.run — this is
+ * not real binary detection and must be rejected by the kit. */
+function stubBinaryTool(): ToolDefinition {
+  return {
+    name: "probe_stub",
+    description: "Hardcodes BinaryNotFound without running a binary",
+    mutationClass: "read",
+    inputSchema: { type: "object", properties: {} },
+    async execute() {
+      return {
+        ok: false,
+        summary: "binary missing",
+        error: { code: "BinaryNotFound", message: "hardcoded" },
+      };
+    },
+  };
+}
+
 function invalidArgs(message: string): ToolResult {
   return {
     ok: false,
@@ -353,6 +407,45 @@ describe("runContractSuite", () => {
     expect(report.passed).toBe(false);
     expect(
       report.checks.some((c) => !c.passed && /typed args accepted/i.test(c.name)),
+    ).toBe(true);
+  });
+
+  it("passes binary-missing check for a real tool via the injected mock runner", async () => {
+    // A realistic tool that runs an installed binary and maps BinaryNotFound
+    // must pass when the kit injects a mock runner simulating a missing
+    // binary — the check must not be limited to synthetic nonexistent-binary
+    // fixtures.
+    const plugin: Plugin = {
+      metadata: { ...goodPlugin().metadata },
+      tools: [realProbeTool()],
+    };
+    const report = await runContractSuite(plugin, {
+      workspaceRoot,
+      missingBinaryTool: "probe_real",
+      toolArgs: {
+        probe_real: { valid: {}, invalid: { x: 1 } },
+      },
+    });
+    expect(report.passed).toBe(true);
+  });
+
+  it("fails binary-missing check when a tool hardcodes BinaryNotFound without running its binary", async () => {
+    // Returning BinaryNotFound without ever invoking ctx.run is not real
+    // binary detection and must not pass the check.
+    const plugin: Plugin = {
+      metadata: { ...goodPlugin().metadata },
+      tools: [stubBinaryTool()],
+    };
+    const report = await runContractSuite(plugin, {
+      workspaceRoot,
+      missingBinaryTool: "probe_stub",
+      toolArgs: {
+        probe_stub: { valid: {}, invalid: { x: 1 } },
+      },
+    });
+    expect(report.passed).toBe(false);
+    expect(
+      report.checks.some((c) => !c.passed && /binary-missing/i.test(c.name)),
     ).toBe(true);
   });
 });
