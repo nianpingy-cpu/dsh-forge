@@ -2,21 +2,21 @@
 
 Current Version: 0.0.0 (pre-release)
 Current Milestone: V0.1.0
-Current Issue: ISSUE-001 (Bootstrap repository)
-Current Branch: V0.1.0/issue-001-bootstrap-repository
-Current PR: #31 (ISSUE-001: Bootstrap repository → release/v0.1.0)
+Current Issue: ISSUE-009 (ast-grep read adapter) — development complete, PR open
+Current Branch: V0.1.0/issue-009-ast-grep-read-adapter
+Current PR: #38 (ISSUE-009 → ISSUE-008 branch; stacked chain #31→#32→#33→#34→#35→#36→#37→#38)
 
-Completed Issues: (none)
+Completed Issues (development): ISSUE-001..ISSUE-009 (RED+GREEN evidence in PRs #31-#38)
 
-Open Issues: ISSUE-001 .. ISSUE-030
+Open Issues: ISSUE-010 .. ISSUE-030 (ISSUE-010 ast-grep rewrite is next)
 
-Blocked: PR #31 merge gate — external model review pending (no reviewer API configured yet; pipeline arrives in ISSUE-008)
+Blocked: All merges — external reviewer API key not yet configured (REVIEWER_A_* env vars). Per ADR-006 no PR may merge without at least one external model review. Development continues on stacked branches per blocker policy.
 
-Latest CI: PASS (PR #31, ubuntu-latest + windows-latest, 2026-08-14)
+Latest CI: PASS — PR #38, ubuntu-latest + windows-latest (92/92 tests incl. real ast-grep integration)
 
-Latest External Review: (pipeline not yet implemented — ISSUE-008)
+Latest External Review: Pipeline implemented (ISSUE-008, PR #37) with mocked tests; awaiting real reviewer credentials
 
-Next Action: Obtain external reviewer configuration, complete review of PR #31, merge, proceed to ISSUE-002.
+Next Action: Configure REVIEWER_A_* env vars → run external reviews on PR chain #31..#38 → merge in order → close Issues #1..#9 → start ISSUE-010 (ast_rewrite + DSH integration).
 
 ## Branch strategy note
 
