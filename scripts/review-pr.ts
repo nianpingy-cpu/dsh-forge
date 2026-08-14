@@ -12,6 +12,8 @@ export interface ReviewInput {
   issue: { title: string; body: string; labels: string[] };
   baseCommit: string;
   headCommit: string;
+  /** Commit history between base and head, newest-first: "shortsha subject". */
+  commits: string[];
   diff: string;
   changedFiles: string[];
   testSummary: string;
@@ -116,6 +118,9 @@ export function buildReviewPrompt(input: ReviewInput, focus: ReviewFocus): strin
     "## Commits",
     `base: ${input.baseCommit}`,
     `head: ${input.headCommit}`,
+    input.commits.length > 0
+      ? input.commits.join("\n")
+      : "(commit history unavailable)",
     "",
     "## Changed files",
     input.changedFiles.join("\n"),

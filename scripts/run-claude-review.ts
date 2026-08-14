@@ -44,14 +44,18 @@ function gh(args: string): string {
 
 function gatherInput(pr: number): ReviewInput {
   const prJson = JSON.parse(
-    gh(`pr view ${pr} --json title,body,baseRefOid,headRefOid`),
+    gh(`pr view ${pr} --json title,body,baseRefOid,headRefOid,commits`),
   ) as {
     title: string;
     body: string;
     baseRefOid: string;
     headRefOid: string;
+    commits: { oid: string; messageHeadline: string }[];
   };
   const diff = gh(`pr diff ${pr}`);
+  const commits = prJson.commits.map(
+    (c) => `${c.oid.slice(0, 7)} ${c.messageHeadline.split("\n")[0] ?? ""}`,
+  );
   const changedFiles = diff
     .split("\n")
     .filter((l) => l.startsWith("+++ b/"))
@@ -80,6 +84,7 @@ function gatherInput(pr: number): ReviewInput {
     issue,
     baseCommit: prJson.baseRefOid,
     headCommit: prJson.headRefOid,
+    commits,
     diff: diff.slice(0, 60_000),
     changedFiles,
     testSummary:

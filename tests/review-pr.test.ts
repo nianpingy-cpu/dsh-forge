@@ -29,6 +29,10 @@ function makeInput(): ReviewInput {
     issue: { title: "ISSUE-004: Core process runner", body: "## Objective\nImplement runner", labels: ["type:infra"] },
     baseCommit: "abc123",
     headCommit: "def456",
+    commits: [
+      "ac055f2 test(core): add failing smoke test for core package (#1)",
+      "f65f96a feat(core): bootstrap minimal core package (#1)",
+    ],
     diff: "+ function runProcess() {}",
     changedFiles: ["packages/core/src/process/runner.ts"],
     testSummary: "26/26 passed, typecheck clean",
@@ -48,6 +52,12 @@ describe("buildReviewPrompt", () => {
     expect(prompt).toContain("ADR-004");
     expect(prompt).toContain("47f943859bef60e4160492346772ded9b24f765a");
     expect(prompt).toContain("packages/core/src/process/runner.ts");
+  });
+
+  it("includes commit history so TDD evidence can be verified", () => {
+    const prompt = buildReviewPrompt(makeInput(), "correctness-security");
+    expect(prompt).toContain("ac055f2 test(core): add failing smoke test");
+    expect(prompt).toContain("f65f96a feat(core): bootstrap minimal core package");
   });
 
   it("embeds the reviewer focus prompt", () => {
