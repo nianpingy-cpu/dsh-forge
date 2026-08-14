@@ -32,11 +32,15 @@ function echoTool(): ToolDefinition {
       }
       const result = await ctx.run({
         binary: NODE,
-        args: ["-e", "console.log(process.argv[1])", validated.value.message],
+        args: ["-e", "console.log(process.argv[1])", String(validated.value.message)],
         cwd: ctx.workspaceRoot,
       });
       if (result.error?.code === "BinaryNotFound") {
-        return { ok: false, summary: "binary missing", error: result.error };
+        return {
+          ok: false,
+          summary: "binary missing",
+          error: { code: "BinaryNotFound", message: result.error.message },
+        };
       }
       return {
         ok: result.exitCode === 0,
@@ -53,7 +57,11 @@ function missingBinaryTool(): ToolDefinition {
     description: "Always reports BinaryNotFound",
     mutationClass: "read",
     inputSchema: { type: "object", properties: {} },
-    async execute(_args, ctx) {
+    async execute(args, ctx) {
+      const validated = validateArgs(this.inputSchema, args);
+      if (!validated.ok) {
+        return invalidArgs(validated.error);
+      }
       const result = await ctx.run({
         binary: "dsh-forge-missing-binary-xyz",
         args: [],
@@ -62,7 +70,10 @@ function missingBinaryTool(): ToolDefinition {
       return {
         ok: false,
         summary: "binary missing",
-        error: result.error ?? { code: "ToolFailure", message: "unknown" },
+        error:
+          result.error?.code === "BinaryNotFound"
+            ? { code: "BinaryNotFound", message: result.error.message }
+            : { code: "ToolFailure", message: "unknown" },
       };
     },
   };
