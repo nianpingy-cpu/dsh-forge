@@ -1,0 +1,41 @@
+{
+  "verdict": "approve",
+  "blocking": [],
+  "non_blocking": [
+    "packages/plugin-semgrep/src/index.ts (parseSemgrepJson/finishScan): parsed JSON is cast to SemgrepResult without Array.isArray validation. If semgrep ever emits `results` or `errors` as a non-array, `.map`/`for..of` throws instead of returning a normalized ToolResult, violating the tool contract. The ruff plugin guards this exact case (parseRuffJson checks Array.isArray); semgrep should too.",
+    "toRelativeFile: raw `file.startsWith(workspaceRoot)` + `slice(len+1)` is case-sensitive and prefix-based. On Windows, a casing difference between realpathSync-canonicalized workspaceRoot and semgrep's echoed path leaves absolute paths in diagnostics; `file === workspaceRoot` yields an empty string. Use node:path relative() or a `workspaceRoot + sep` prefix check.",
+    "finishScan returns ToolFailure and discards ALL findings when any entry exists in `errors` — a workspace with one unparseable file plus valid findings reports a hard failure instead of partial diagnostics. Spec-mandated by the parse-error TDD case, but worth a follow-up to surface findings alongside the error.",
+    "semgrep_scan with `path: \"\"` silently resolves to the workspace root (resolveInWorkspace('') == root) instead of InvalidArguments; semgrep_scan_file explicitly rejects empty strings but semgrep_scan does not.",
+    "Fixed 120s timeout: whole-workspace `--config auto` / `p/security-audit` scans on large repos can spuriously Timeout. Consider a larger default or a per-invocation timeout argument.",
+    "semgrep_scan / semgrep_security_scan are classified and gated as `network` even when the resolved config is a local workspace path (no network occurs). Over-gating is safe but prompts network approval unnecessarily; consider downgrading the effective gate to read when the config resolved locally.",
+    "No `--metrics=off` / SEMGREP_SEND_METRICS: semgrep may send anonymous usage metrics from an environment that inherits HOME/USERPROFILE. For a hermetic harness, pass env { SEMGREP_SEND_METRICS: 'off' } via ctx.run.",
+    "Test helper semgrepRunner fakes success (canned empty JSON) when the binary is missing, so most 'real or fallback' assertions are satisfiable without semgrep; only the multi-language test actually forces the real binary. This weakens the TDD evidence in environments where semgrep silently isn't found."
+  ],
+  "security": [
+    "No shell, typed argv only; `--config`/target values cannot reach semgrep as flags (registry regex excludes leading dashes/spaces; resolved local paths are absolute).",
+    "path and rules args are boundary-checked via resolveInWorkspace (canonical realpath, symlink-escape rejected); a prompt-injected absolute/../ rules value cannot make semgrep read outside the workspace.",
+    "Binary resolution never returns a bare name and never searches the workspace cwd, closing the repo-planted semgrep.exe hijack vector; missing binary maps to BinaryNotFound via the ENOENT sentinel.",
+    "Tools are read-only (read/network); no write or destructive tools exposed, satisfying the acceptance criteria.",
+    "Note: semgrep writes its rule cache under HOME and fetches registry packs — side effects outside the workspace are inherent to the network class and should be documented as such."
+  ],
+  "test_gaps": [
+    "No test for the default invocation of semgrep_scan / semgrep_security_scan (no path, no rules → workspace-root scan with `--config auto` / `p/security-audit`).",
+    "No tests for the timeout path (Timeout error) or the truncated-output path (>10 MiB).",
+    "No test for symlink-escape of `path` or `rules` (boundary check relies on core; only `..` and absolute-outside cases are covered).",
+    "No test that semgrep_scan_file rejects a directory or a nonexistent path.",
+    "No malformed-output test exercising non-array `results`/`errors`.",
+    "No test pinning exit-code semantics with the real binary for a finding-producing scan beyond the multi-language smoke test."
+  ],
+  "compatibility": [
+    "Correctness depends on `semgrep scan` exiting 0 with findings when `--error` is not passed (the current semgrep default), but the plugin does not pin an upstream semgrep version (metadata says only 'semgrep'). CI installs latest via pip; a future default flip to exit 1 on findings would turn every finding into ToolFailure.",
+    "semgrep_ruleset assumes `semgrep scan --validate` accepts a config without a target path; older semgrep CLIs exposed validate differently.",
+    "Windows: semgrep may emit paths with different separators/casing than the canonicalized workspaceRoot, so diagnostic file paths may remain absolute (see toRelativeFile)."
+  ],
+  "architecture": [
+    "Correctly reuses core for process execution (ctx.run), arg validation, diagnostics normalization, workspace checks, and permission gating — no infrastructure duplication.",
+    "semgrep_ruleset reads the ruleset file directly via node:fs to count rules (no core file helper exists); acceptable, but the dynamic `import('node:fs')` inside execute is inconsistent with the static import used in binary.ts.",
+    "Metadata/coreContractVersion/capabilities conform to the contract; plugin uses the repo's named-export convention (consistent with plugin-ruff/plugin-act), not the literal 'default export' wording in the standard.",
+    "Concurrent scans share semgrep's ~/.cache/semgrep; semgrep uses cache locks, but parallel whole-workspace scans on large repos may contend on cache and timeout."
+  ],
+  "confidence": 0.7
+}
