@@ -8,7 +8,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export interface CompatibilityManifest {
@@ -128,14 +130,16 @@ export interface ReachabilityResult {
 }
 
 /**
- * Re-verify the pinned SHA at execution time: `git ls-remote` against the
- * recorded upstream repository/branch (fixed arguments, no shell, consistent
- * with ADR-004). A fabricated 40-hex SHA is rejected because it is not
- * reachable. The exec is injectable for tests.
+ * Re-verify the pinned SHA at execution time by fetching it from the recorded
+ * upstream repository (fixed arguments, no shell, consistent with ADR-004).
+ * `git fetch <url> <sha>` succeeds iff the commit EXISTS and is reachable, so
+ * a historical pin stays valid after upstream advances (unlike
+ * `ls-remote <url> <branch>`, which only matches the current branch tip). A
+ * fabricated 40-hex SHA is rejected because it cannot be fetched. The exec is
+ * injectable for tests.
  */
 export function checkReachability(
   repository: string,
-  branch: string,
   commit: string,
   exec: (cmd: string, args: string[]) => string = (cmd, args) =>
     execFileSync(cmd, args, {
@@ -144,27 +148,28 @@ export function checkReachability(
       shell: false,
     }),
 ): ReachabilityResult {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-reach-"));
   try {
-    const out = exec("git", [
-      "ls-remote",
+    exec("git", ["init", "-q", dir]);
+    exec("git", [
+      "-C",
+      dir,
+      "fetch",
+      "--depth=1",
       `https://github.com/${repository}.git`,
-      branch,
+      commit,
     ]);
-    if (out.includes(commit)) {
-      return {
-        reachable: true,
-        detail: `pinned commit ${commit} is reachable on ${repository}@${branch}`,
-      };
-    }
     return {
-      reachable: false,
-      detail: `pinned commit ${commit} was NOT found on ${repository}@${branch} (git ls-remote)`,
+      reachable: true,
+      detail: `pinned commit ${commit} exists in ${repository} (verified by fetch)`,
     };
   } catch (err) {
     return {
       reachable: false,
-      detail: `git ls-remote failed for ${repository}: ${String(err)}`,
+      detail: `pinned commit ${commit} is not reachable in ${repository}: ${String(err)}`,
     };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -199,7 +204,7 @@ export function main(
   }
   console.log("OK: compatibility manifest is valid");
   console.log(`Pinned DeepSeek Harness commit: ${commit} (${branch})`);
-  const reachability = checkReachability(repository, branch, commit, options.exec);
+  const reachability = checkReachability(repository, commit, options.exec);
   if (!reachability.reachable) {
     console.error(`REJECTED: ${reachability.detail}`);
     return 1;

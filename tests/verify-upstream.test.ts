@@ -122,7 +122,13 @@ describe("validateManifest", () => {
       new URL("../compatibility/deepseek-harness.json", import.meta.url),
     );
     // A fabricated SHA must be rejected at execution time, not just format.
-    expect(main(manifestPath, { exec: () => "" })).toBe(1);
+    expect(
+      main(manifestPath, {
+        exec: () => {
+          throw new Error("fatal: couldn't find remote ref");
+        },
+      }),
+    ).toBe(1);
   });
 
   it("main exits 1 for a missing manifest", () => {
@@ -132,30 +138,25 @@ describe("validateManifest", () => {
 
 describe("checkReachability", () => {
   const SHA = "47f943859bef60e4160492346772ded9b24f765a";
-  it("reports reachable when ls-remote lists the commit on the branch", () => {
-    const result = checkReachability(
-      "deepseek-ai/deepseek-harness",
-      "master",
-      SHA,
-      () => `${SHA}\trefs/heads/master\n`,
-    );
+  it("reports reachable when the commit can be fetched", () => {
+    const result = checkReachability("deepseek-ai/deepseek-harness", SHA, () => "");
     expect(result.reachable).toBe(true);
   });
 
   it("reports unreachable when the commit is absent", () => {
     const result = checkReachability(
       "deepseek-ai/deepseek-harness",
-      "master",
       SHA,
-      () => "",
+      () => {
+        throw new Error("remote error: not our ref");
+      },
     );
     expect(result.reachable).toBe(false);
   });
 
-  it("reports unreachable when ls-remote fails", () => {
+  it("reports unreachable when git fails", () => {
     const result = checkReachability(
       "deepseek-ai/deepseek-harness",
-      "master",
       SHA,
       () => {
         throw new Error("network down");
