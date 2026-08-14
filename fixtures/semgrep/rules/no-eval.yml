@@ -1,0 +1,11 @@
+rules:
+  - id: no-eval
+    languages: [python]
+    message: "Do not use eval on untrusted input"
+    severity: ERROR
+    pattern: eval(...)
+  - id: no-shell-true
+    languages: [python]
+    message: "Avoid shell=True in subprocess calls"
+    severity: WARNING
+    pattern: subprocess.run(..., shell=True)
