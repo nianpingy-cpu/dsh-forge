@@ -127,6 +127,41 @@ describe("trivy_repo_scan", () => {
     expect(a.error?.code).toBe("InvalidArguments");
     expect(b.error?.code).toBe("InvalidArguments");
   });
+
+  it("rejects a repo path that escapes the workspace", async () => {
+    const result = await tool().execute({ repo: "../outside-repo" }, ctx(trivyRunner));
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+  });
+
+  it("passes remote URLs through and resolves local paths in-workspace", async () => {
+    let captured: ExecutionRequest | undefined;
+    const captureRunner: ExecutionRunner = async (req) => {
+      captured = req;
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({ Results: [] }),
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      };
+    };
+    const url = await tool().execute(
+      { repo: "https://github.com/foo/bar.git" },
+      ctx(captureRunner),
+    );
+    expect(url.ok).toBe(true);
+    expect(captured!.args[captured!.args.length - 1]).toBe(
+      "https://github.com/foo/bar.git",
+    );
+    const local = await tool().execute({ repo: "fixtures/trivy" }, ctx(captureRunner));
+    expect(local.ok).toBe(true);
+    const lastArg = captured!.args[captured!.args.length - 1]!;
+    expect(isAbsolute(lastArg)).toBe(true);
+    expect(lastArg.startsWith(workspaceRoot)).toBe(true);
+  });
 });
 
 describe("trivy_config_scan", () => {
@@ -175,6 +210,18 @@ describe("trivy_secret_scan", () => {
     expect(diags[0]!.severity).toBe("critical");
     expect(diags[0]!.line).toBe(2);
     expect(diags[1]!.rule).toBe("secret:password");
+  });
+
+  it("never surfaces raw output (plaintext secret values not leaked)", async () => {
+    const result = await tool().execute(
+      { path: "secrets" },
+      ctx(jsonRunner("secret-report.json")),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.raw).toBeUndefined();
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("AKIA5K4D3X7Q2T9P0Z1W");
+    expect(serialized).not.toContain("superSecret123");
   });
 
   it("scans the committed secrets fixture with real trivy (offline)", async () => {
@@ -237,6 +284,18 @@ describe("trivy_sbom", () => {
     const result = await tool().execute({ path: "sbom" }, ctx(trivyRunner, false));
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("PermissionDenied");
+  });
+});
+
+describe("default export", () => {
+  it("exports a default Plugin object (Plugin Standard)", async () => {
+    const mod = await import("@dsh-forge/plugin-trivy");
+    const def = (mod as { default?: { metadata?: unknown; tools?: unknown } }).default;
+    expect(def).toBeTruthy();
+    expect((def as { metadata: { name: string } }).metadata.name).toBe(
+      "@dsh-forge/plugin-trivy",
+    );
+    expect(Array.isArray((def as { tools: unknown[] }).tools)).toBe(true);
   });
 });
 

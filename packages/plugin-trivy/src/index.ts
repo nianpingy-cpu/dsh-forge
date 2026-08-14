@@ -315,6 +315,7 @@ function reportResult(
   run: { ok: true; stdout: string },
   type: "vulnerability" | "misconfiguration" | "secret" | "license",
   okSummary: string,
+  opts?: { includeRaw?: boolean },
 ): ToolResult {
   const parsed = parseReport(run);
   if (!parsed.ok) return parsed.result;
@@ -323,6 +324,7 @@ function reportResult(
     parsed.report.Results ?? [],
     type,
   );
+  const includeRaw = opts?.includeRaw ?? true;
   return {
     ok: true,
     summary:
@@ -333,9 +335,11 @@ function reportResult(
         ? summarizeDiagnostics(TOOL, diagnostics)
         : undefined,
     raw:
-      run.stdout.length > 20_000
+      includeRaw && run.stdout.length > 20_000
         ? run.stdout.slice(0, 20_000) + "\n...[truncated]"
-        : run.stdout,
+        : includeRaw
+          ? run.stdout
+          : undefined,
   };
 }
 
@@ -382,7 +386,7 @@ const PATH_SCHEMA = {
 const trivyRepoScan: ToolDefinition = {
   name: "trivy_repo_scan",
   description:
-    "Scan a Git repository (URL or workspace path) with trivy for vulnerabilities/misconfigurations/secrets (network: downloads the vulnerability DB and may clone a remote repo).",
+    "Scan a Git repository with trivy for vulnerabilities/misconfigurations/secrets. The repo may be a remote URL or a workspace-relative local path (network: downloads the vulnerability DB and may clone a remote repo).",
   mutationClass: "network",
   inputSchema: {
     type: "object",
@@ -404,12 +408,22 @@ const trivyRepoScan: ToolDefinition = {
     if (typeof repo !== "string" || repo === "" || repo.trim().startsWith("-")) {
       return invalid("repo must be a non-empty repository URL or path");
     }
+    let target = repo.trim();
+    // Remote URLs scan the remote repo (that is the tool's purpose). Any
+    // other value is a local path and must resolve inside the workspace so a
+    // `../` or absolute path cannot read git repos outside the boundary
+    // (ADR-005).
+    if (!/^(https?:\/\/|git@|ssh:\/\/|git:\/\/)/i.test(target)) {
+      const resolved = resolveInsideWorkspace(ctx.workspaceRoot, target);
+      if (!resolved.ok) return resolved.result;
+      target = resolved.absolute;
+    }
     const run = await runTrivy(ctx, [
       "repo",
       "--format",
       "json",
       "-q",
-      repo.trim(),
+      target,
     ]);
     if (!run.ok) return run.result;
     if (run.exitCode !== 0) {
@@ -497,7 +511,15 @@ const trivySecretScan: ToolDefinition = {
           `exit code ${run.exitCode}`,
       );
     }
-    return reportResult(ctx.workspaceRoot, run, "secret", "no secrets found");
+    // Secrets[].Match holds the plaintext secret values; never surface raw
+    // output for the secret scanner (no leak to the model / logs).
+    return reportResult(
+      ctx.workspaceRoot,
+      run,
+      "secret",
+      "no secrets found",
+      { includeRaw: false },
+    );
   },
 };
 
@@ -618,3 +640,5 @@ export const trivyPlugin: {
 };
 
 export { resolveTrivyBinary };
+
+export default trivyPlugin;
