@@ -29,7 +29,11 @@ import {
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveActBinary, ACT_BINARY_HINT } from "./binary.js";
+import {
+  resolveActBinary,
+  resolveDockerBinary,
+  ACT_BINARY_HINT,
+} from "./binary.js";
 
 // Platform → image overrides so act does not prompt interactively for a
 // default image on first run (it otherwise blocks waiting for input).
@@ -119,7 +123,9 @@ async function detectDocker(
   let exec: ExecutionResult;
   try {
     exec = await ctx.run({
-      binary: "docker",
+      // Absolute path (never a bare name): a repo-planted docker.exe in the
+      // workspace must never be executed via Windows CreateProcess cwd-search.
+      binary: resolveDockerBinary(),
       args: ["info", "--format", "{{.ServerVersion}}"],
       cwd: ctx.workspaceRoot,
       timeoutMs: 15_000,

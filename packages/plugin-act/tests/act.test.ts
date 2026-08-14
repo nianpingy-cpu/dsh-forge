@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { mkdtempSync, cpSync, existsSync, writeFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -156,6 +157,58 @@ describe("resolveActBinary", () => {
     // A bare name would let Windows resolve act from the harness cwd (the
     // analyzed workspace) before PATH — a repo-planted act.exe must not run.
     expect(isAbsolute(resolveActBinary())).toBe(true);
+  });
+
+  it("uses an unpredictable absolute sentinel when act is absent", () => {
+    const original = process.env.PATH;
+    try {
+      process.env.PATH = join(tmpdir(), "dsh-empty-" + randomUUID());
+      const a = resolveActBinary();
+      const b = resolveActBinary();
+      expect(isAbsolute(a)).toBe(true);
+      expect(a).not.toBe("act");
+      // Random component: a local attacker cannot pre-create the path in a
+      // world-writable dir like /tmp (predictable-path TOCTOU).
+      expect(a).not.toBe(b);
+    } finally {
+      process.env.PATH = original;
+    }
+  });
+
+  it("probes docker via an absolute path, never a bare name", async () => {
+    const probes: string[] = [];
+    const captureRunner: ExecutionRunner = async (req) => {
+      if (req.binary.toLowerCase().includes("docker")) {
+        probes.push(req.binary);
+        return {
+          exitCode: 0,
+          stdout: "27.0.0",
+          stderr: "",
+          timedOut: false,
+          aborted: false,
+          truncated: false,
+          durationMs: 1,
+        };
+      }
+      return {
+        exitCode: 0,
+        stdout: MULTI_TABLE,
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      };
+    };
+    const t = actPlugin.tools.find((x) => x.name === "act_dry_run")!;
+    const result = await t.execute({}, ctx(captureRunner));
+    expect(result.ok).toBe(true);
+    expect(probes.length).toBeGreaterThan(0);
+    for (const p of probes) {
+      expect(isAbsolute(p)).toBe(true);
+      expect(p).not.toBe("docker");
+      expect(p.toLowerCase()).not.toBe("docker.exe");
+    }
   });
 
   it("yields BinaryNotFound via the sentinel path when act is not on PATH", async () => {
