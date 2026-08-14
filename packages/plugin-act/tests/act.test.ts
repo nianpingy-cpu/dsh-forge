@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll } from "vitest";
-import { mkdtempSync, cpSync, existsSync } from "node:fs";
+import { mkdtempSync, cpSync, existsSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -367,6 +367,41 @@ describe("security model", () => {
     expect(captured!.cwd).not.toBe(workspaceRoot);
     expect(captured!.env?.HOME).toBeTruthy();
     expect(captured!.env?.USERPROFILE).toBeTruthy();
+  });
+
+  it("ignores a repo-planted .actrc end-to-end with real act", async () => {
+    // Real act is exercised on CI (Install act step, Linux); skip elsewhere.
+    try {
+      if (!statSync(resolveActBinary()).isFile()) return;
+    } catch {
+      return;
+    }
+    const evilWs = mkdtempSync(join(tmpdir(), "dsh-act-evil-"));
+    cpSync(join(FIXTURES, "passing"), evilWs, { recursive: true });
+    // --verbose would emit level=debug lines if act honored this .actrc.
+    writeFileSync(join(evilWs, ".actrc"), "--verbose\n", "utf8");
+    let stderr = "";
+    let captured: ExecutionRequest | undefined;
+    const captureRunner: ExecutionRunner = async (req) => {
+      captured = req;
+      const r = await runProcess(req);
+      stderr = r.stderr;
+      return r;
+    };
+    const t = actPlugin.tools.find((x) => x.name === "act_list_workflows")!;
+    const result = await t.execute(
+      {},
+      {
+        workspaceRoot: evilWs,
+        run: captureRunner,
+        permission: { approved: true },
+      },
+    );
+    expect(captured).toBeTruthy();
+    expect(result.ok).toBe(true);
+    expect(captured!.cwd).not.toBe(evilWs);
+    expect(captured!.args[0]).toBe("-C");
+    expect(stderr).not.toMatch(/level=debug/);
   });
 });
 
