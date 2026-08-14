@@ -80,4 +80,61 @@ execFileSync("git", ["status"]);`,
     );
     expect(shellViolations(messages)).toBe(0);
   });
+
+  // ---- regression: bypass forms flagged by external review of PR #31 ----
+
+  it("flags exec through a namespace import (member expression)", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `import * as cp from "node:child_process";
+cp.exec("rm -rf /");`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
+
+  it("flags spawn through a namespace import with shell: true", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `import * as cp from "node:child_process";
+cp.spawn("sh", ["-c", cmd], { shell: true });`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
+
+  it("flags an aliased spawn import", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `import { spawn as sp } from "node:child_process";
+sp("sh", ["-c", cmd], { shell: true });`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
+
+  it("does NOT flag a local function merely named exec", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `function exec(a) { return a; }
+exec("hello");`,
+      config,
+    );
+    expect(shellViolations(messages)).toBe(0);
+  });
+
+  it("flags require-destructured spawnSync from child_process", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `const { spawnSync } = require("node:child_process");
+spawnSync("sh", ["-c", "ls"], { shell: true });`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
 });
