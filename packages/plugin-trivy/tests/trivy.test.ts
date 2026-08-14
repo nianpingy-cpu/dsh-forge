@@ -108,7 +108,7 @@ describe("trivy_repo_scan", () => {
       ctx(jsonRunner("vuln-report.json")),
     );
     expect(result.ok).toBe(true);
-    expect(result.summary).toBe("1 vulnerability finding(s)");
+    expect(result.summary).toBe("1 vuln finding(s)");
     const d = (result.diagnostics ?? [])[0]!;
     expect(d.rule).toBe("vuln:CVE-2024-1234");
     expect(d.severity).toBe("error");
@@ -210,7 +210,7 @@ describe("trivy_config_scan", () => {
       ctx(jsonRunner("config-report.json")),
     );
     expect(result.ok).toBe(true);
-    expect(result.summary).toBe("1 misconfiguration finding(s)");
+    expect(result.summary).toBe("1 misconfig finding(s)");
     const d = (result.diagnostics ?? [])[0]!;
     expect(d.rule).toBe("misconfig:DS002");
     expect(d.severity).toBe("error");
@@ -334,7 +334,7 @@ describe("trivy_image_scan", () => {
       ctx(jsonRunner("vuln-report.json")),
     );
     expect(result.ok).toBe(true);
-    expect(result.summary).toBe("1 vulnerability finding(s)");
+    expect(result.summary).toBe("1 vuln finding(s)");
   });
 
   it("denies without permission approval (network)", async () => {
@@ -355,7 +355,7 @@ describe("trivy_sbom", () => {
       ctx(jsonRunner("sbom-report.json")),
     );
     expect(result.ok).toBe(true);
-    expect(result.summary).toBe("2 sbom finding(s)");
+    expect(result.summary).toBe("2 license finding(s)");
     const diags = result.diagnostics ?? [];
     expect(diags[0]!.rule).toBe("license:MIT");
     expect(diags[1]!.rule).toBe("license:GPL-3.0");

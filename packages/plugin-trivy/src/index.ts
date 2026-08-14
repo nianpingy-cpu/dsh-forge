@@ -365,6 +365,23 @@ function redactReportSecrets(text: string): string {
   }
 }
 
+/**
+ * Summarize diagnostics grouped by their result-type rule prefix
+ * (vuln:/misconfig:/secret:/license:/sbom:) so mixed-class reports are labeled
+ * accurately (e.g. a repo scan that only finds secrets says "N secret
+ * finding(s)", not "N vulnerability finding(s)").
+ */
+function summaryFromDiagnostics(diagnostics: Diagnostic[]): string {
+  const counts = new Map<string, number>();
+  for (const d of diagnostics) {
+    const cls = d.rule?.split(":")[0] ?? "finding";
+    counts.set(cls, (counts.get(cls) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([cls, n]) => `${n} ${cls} finding(s)`)
+    .join(", ");
+}
+
 function reportResult(
   workspaceRoot: string,
   run: { ok: true; stdout: string },
@@ -384,7 +401,9 @@ function reportResult(
   return {
     ok: true,
     summary:
-      diagnostics.length > 0 ? `${diagnostics.length} ${type} finding(s)` : okSummary,
+      diagnostics.length > 0
+        ? summaryFromDiagnostics(diagnostics)
+        : okSummary,
     diagnostics,
     summaryBlock:
       diagnostics.length > 0
@@ -420,7 +439,7 @@ function sbomResult(
     ok: true,
     summary:
       diagnostics.length > 0
-        ? `${diagnostics.length} sbom finding(s)`
+        ? summaryFromDiagnostics(diagnostics)
         : "no sbom findings",
     diagnostics,
     summaryBlock:
