@@ -15,6 +15,7 @@
  */
 import {
   validateArgs,
+  assertPermission,
   resolveInWorkspace,
   WorkspaceViolationError,
   toDiagnostic,
@@ -102,13 +103,31 @@ function resolveInsideWorkspace(
  * "p/security-audit") passes through verbatim; a path-like value (contains a
  * separator or a .yml/.yaml suffix) must resolve inside the workspace.
  */
+function permissionDenied(): ToolResult {
+  return {
+    ok: false,
+    summary: "permission denied",
+    error: {
+      code: "PermissionDenied",
+      message:
+        "this tool may perform network access (fetching Semgrep registry rules) and requires permission approval",
+    },
+  };
+}
+
+/**
+ * Resolve the `rules` argument. A value that looks like a local ruleset file
+ * (.yml/.yaml/.json suffix) must resolve inside the workspace; everything else
+ * (registry configs like `auto`, `p/security-audit`, `r/python`) passes
+ * through verbatim to semgrep.
+ */
 function resolveRules(
   workspaceRoot: string,
   rules: string | undefined,
 ): { ok: true; config: string } | { ok: false; result: ToolResult } {
   if (!rules) return { ok: true, config: "auto" };
-  const looksLikePath = /[/\\]/.test(rules) || /\.ya?ml$/i.test(rules);
-  if (!looksLikePath) return { ok: true, config: rules };
+  const looksLikeLocalFile = /\.ya?ml$/i.test(rules) || /\.json$/i.test(rules);
+  if (!looksLikeLocalFile) return { ok: true, config: rules };
   const resolved = resolveInsideWorkspace(workspaceRoot, rules);
   if (!resolved.ok) return resolved;
   return { ok: true, config: resolved.absolute };
@@ -321,8 +340,8 @@ const RULES_SCHEMA = {
 const semgrepScan: ToolDefinition = {
   name: "semgrep_scan",
   description:
-    "Run a Semgrep scan over a directory (default: workspace root) and return findings as normalized diagnostics (read, no autofix).",
-  mutationClass: "read",
+    "Run a Semgrep scan over a directory (default: workspace root) and return findings as normalized diagnostics. Network: the default config (`auto`) and registry configs fetch rules from the Semgrep registry (no autofix).",
+  mutationClass: "network",
   inputSchema: {
     type: "object",
     properties: { path: PATH_SCHEMA, rules: RULES_SCHEMA },
@@ -331,6 +350,9 @@ const semgrepScan: ToolDefinition = {
   async execute(args, ctx) {
     const validated = validateArgs(this.inputSchema, args);
     if (!validated.ok) return invalid(validated.error);
+    if (!assertPermission("network", ctx.permission ?? { approved: false })) {
+      return permissionDenied();
+    }
     const { path, rules } = validated.value as { path?: string; rules?: string };
     let target = ".";
     if (path !== undefined) {
@@ -355,8 +377,8 @@ const semgrepScan: ToolDefinition = {
 const semgrepScanFile: ToolDefinition = {
   name: "semgrep_scan_file",
   description:
-    "Run a Semgrep scan over a single file and return findings as normalized diagnostics (read, no autofix).",
-  mutationClass: "read",
+    "Run a Semgrep scan over a single file and return findings as normalized diagnostics. Network: the default config (`auto`) and registry configs fetch rules from the Semgrep registry (no autofix).",
+  mutationClass: "network",
   inputSchema: {
     type: "object",
     properties: { path: PATH_SCHEMA, rules: RULES_SCHEMA },
@@ -365,6 +387,9 @@ const semgrepScanFile: ToolDefinition = {
   async execute(args, ctx) {
     const validated = validateArgs(this.inputSchema, args);
     if (!validated.ok) return invalid(validated.error);
+    if (!assertPermission("network", ctx.permission ?? { approved: false })) {
+      return permissionDenied();
+    }
     const { path, rules } = validated.value as { path: string; rules?: string };
     if (typeof path !== "string" || path === "") {
       return invalid("path must be a non-empty string");
@@ -437,8 +462,8 @@ const semgrepRuleset: ToolDefinition = {
 const semgrepSecurityScan: ToolDefinition = {
   name: "semgrep_security_scan",
   description:
-    "Run a Semgrep security-audit scan (p/security-audit by default; override with a local `rules`) and return findings as normalized diagnostics (read, no autofix).",
-  mutationClass: "read",
+    "Run a Semgrep security-audit scan (p/security-audit by default; override with a local `rules`) and return findings as normalized diagnostics. Network: fetches rules from the Semgrep registry (no autofix).",
+  mutationClass: "network",
   inputSchema: {
     type: "object",
     properties: { path: PATH_SCHEMA, rules: RULES_SCHEMA },
@@ -447,6 +472,9 @@ const semgrepSecurityScan: ToolDefinition = {
   async execute(args, ctx) {
     const validated = validateArgs(this.inputSchema, args);
     if (!validated.ok) return invalid(validated.error);
+    if (!assertPermission("network", ctx.permission ?? { approved: false })) {
+      return permissionDenied();
+    }
     const { path, rules } = validated.value as { path?: string; rules?: string };
     let target = ".";
     if (path !== undefined) {

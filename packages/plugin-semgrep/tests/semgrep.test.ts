@@ -98,9 +98,10 @@ const INVALID_RULE_JSON = JSON.stringify({
   ],
 });
 
-const ctx = (runner: ExecutionRunner): ToolContext => ({
+const ctx = (runner: ExecutionRunner, approved = true): ToolContext => ({
   workspaceRoot,
   run: runner,
+  permission: approved ? { approved: true } : undefined,
 });
 
 describe("resolveSemgrepBinary", () => {
@@ -216,6 +217,38 @@ describe("semgrep_scan", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("WorkspaceViolation");
   });
+
+  it("denies without permission approval (network class)", async () => {
+    const result = await tool().execute(
+      { path: "findings", rules: "rules/no-eval.yml" },
+      ctx(semgrepRunner, false),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("PermissionDenied");
+  });
+
+  it("passes registry configs through verbatim (p/security-audit)", async () => {
+    let captured: ExecutionRequest | undefined;
+    const captureRunner: ExecutionRunner = async (req) => {
+      captured = req;
+      return {
+        exitCode: 0,
+        stdout: NO_FINDINGS_JSON,
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      };
+    };
+    const result = await tool().execute({ path: "clean" }, ctx(captureRunner));
+    expect(result.ok).toBe(true);
+    expect(captured).toBeTruthy();
+    const configIdx = captured!.args.indexOf("--config");
+    expect(configIdx).toBeGreaterThan(-1);
+    // Default config is `auto` (registry) — never resolved as a workspace path.
+    expect(captured!.args[configIdx + 1]).toBe("auto");
+  });
 });
 
 describe("semgrep_scan_file", () => {
@@ -226,6 +259,15 @@ describe("semgrep_scan_file", () => {
     const result = await tool().execute({}, ctx(semgrepRunner));
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("denies without permission approval (network class)", async () => {
+    const result = await tool().execute(
+      { path: "findings/app.py", rules: "rules/no-eval.yml" },
+      ctx(semgrepRunner, false),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("PermissionDenied");
   });
 
   it("scans a single file (real or fallback)", async () => {
@@ -316,6 +358,33 @@ describe("semgrep_security_scan", () => {
     expect(result.summary).toBe("2 finding(s)");
   });
 
+  it("denies without permission approval (network class)", async () => {
+    const result = await tool().execute({ path: "findings" }, ctx(semgrepRunner, false));
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("PermissionDenied");
+  });
+
+  it("passes p/security-audit through verbatim", async () => {
+    let captured: ExecutionRequest | undefined;
+    const captureRunner: ExecutionRunner = async (req) => {
+      captured = req;
+      return {
+        exitCode: 0,
+        stdout: NO_FINDINGS_JSON,
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      };
+    };
+    const result = await tool().execute({ path: "clean" }, ctx(captureRunner));
+    expect(result.ok).toBe(true);
+    expect(captured).toBeTruthy();
+    const configIdx = captured!.args.indexOf("--config");
+    expect(captured!.args[configIdx + 1]).toBe("p/security-audit");
+  });
+
   it("surfaces an invalid config as a ToolFailure", async () => {
     const mock: ExecutionRunner = async () => ({
       exitCode: 7,
@@ -359,8 +428,11 @@ describe("contract suite", () => {
     const report = await runContractSuite(semgrepPlugin, {
       workspaceRoot,
       runner: routing,
-      missingBinaryTool: "semgrep_scan",
-      missingBinaryToolArgs: { path: "findings", rules: "rules/no-eval.yml" },
+      // Read-only ruleset tool: the kit's binary probe runs without a
+      // permission context, so it must be a tool that reaches ctx.run
+      // without an approval gate.
+      missingBinaryTool: "semgrep_ruleset",
+      missingBinaryToolArgs: { rules: "rules/no-eval.yml" },
       toolArgs: {
         semgrep_scan: {
           valid: { path: "findings", rules: "rules/no-eval.yml" },
