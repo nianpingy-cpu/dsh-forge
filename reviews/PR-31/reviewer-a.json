@@ -1,42 +1,39 @@
 {
   "verdict": "request_changes",
   "blocking": [
-    "eslint.config.js no-shell-exec is still bypassable in ways its own docstring claims are caught, and tests/eslint-adr004.test.ts does not cover them: (1) `const cp = require('node:child_process'); cp.exec(cmd)` — trackBinding only handles ObjectPattern require, so a plain Identifier require binding is never registered; (2) computed member access `cp['exec'](...)` / `cp['spawn'](...)` — resolveChildProcessName returns undefined because of the `!callee.computed` guard; (3) `const opts = { shell: true }; spawn(cmd, args, opts)` — the rule only scans inline ObjectExpression args, so a variable-held options object with shell:true evades detection; (4) createRequire is not tracked at all (`const req = createRequire(import.meta.url); req('node:child_process')`), so even destructured exec via createRequire is missed. Since AGENTS.md/SECURITY.md state shell execution is 'forbidden (ADR-004)' and 'enforced by ESLint', the PR's security deliverable is incomplete; the docstring comment ('member-expression / aliased-import bypasses are caught') is factually wrong.",
-    "TDD/acceptance mismatch: the issue's TDD RED requires a failing smoke test committed before the implementation, but the PR's only test evidence is the post-hoc GREEN smoke test asserting CORE_VERSION. There is no RED commit referenced in the head history and no assertion that the RED step actually failed for the right reason; the smoke test only proves resolution/export, not that the required failing-first cycle was performed."
+    "{\"file\":\"eslint.config.js\",\"line\":145,\"summary\":\"ADR-004 no-shell lint rule remains bypassable in four untested forms despite claiming to catch 'bypass forms': inline require/createRequire call chains, computed non-literal member access, options-object mutation after declaration, and shell obtained via object spread.\",\"short_summary\":\"no-shell rule bypassable via 4 untested forms\",\"failure_scenario\":\"A plugin author writes `createRequire(import.meta.url)(\\\"node:child_process\\\").execSync(userInput)` (callee object is a CallExpression, so resolveChildProcessName at eslint.config.js:145 returns undefined and the call is never reported), or `const o={shell:false}; o.shell=true; spawn(\\\"sh\\\",[\\\"-c\\\",cmd],o)` (the shellOpts map was populated from the initializer; the later assignment is invisible), or `const base={shell:true}; spawn(\\\"sh\\\",[\\\"-c\\\",cmd],{...base})` (the check loop only inspects explicit Property nodes and Identifier args). `pnpm lint` stays green, the shell-executing plugin ships, and CI offers no signal. The test suite in tests/eslint-adr004.test.ts covers only the bound/literal forms, so these regressions are not exercised.\",\"category\":\"security\",\"verdict\":\"CONFIRMED\"}"
   ],
   "non_blocking": [
-    "AGENTS.md (binding rules) instructs agents to verify `compatibility/deepseek-harness.json` before touching integration code, but that file is not part of this PR (committed separately in PR #2). At this commit the reference is dangling.",
-    "`pnpm clean` runs `pnpm -r exec rimraf dist coverage || true`; rimraf is not declared anywhere and is absent from pnpm-lock.yaml, so the command fails in every package and `|| true` masks it — `pnpm clean` silently does nothing on a fresh install.",
-    "engines declares node >=20 and CONTRIBUTING.md says Node >=20, but the DeepSeek Harness compatibility manifest requires >=22.19; CI only exercises node 22, so node 20-21 are advertised but below the harness floor and untested.",
-    "packageManager pins pnpm@11.4.0 while the compatibility manifest records the upstream pin as pnpm@11.7.0; version skew with upstream should be reconciled or justified.",
-    "CI jobs have no timeout-minutes (GitHub default is 360 min); a hung step can block CI for hours. Add per-job timeouts.",
-    "packages/core package.json description advertises 'process runner, diagnostics, workspace policy, contract test kit' but ships only CORE_VERSION, and it has no `exports` map — so the future `@dsh-forge/core/testing` deep import referenced by the plugin standard cannot resolve. Trim the description or add the exports surface.",
-    "pnpm-workspace.yaml declares a `presets/*` glob with no matching directory in this PR (dead config).",
-    "Version skew: root 0.0.0 vs core 0.1.0 / CORE_VERSION '0.1.0' — acceptable pre-release but worth an explicit policy.",
-    "The no-shell rule scans every object argument for a `shell` key, so in TS source `shell: false as const` (a TSAsExpression) would be falsely flagged as unsafe while legitimate variable-hoisted options evade it; consider handling TS wrapped literals."
+    "CI never runs `format:check` (prettier installed and scripted but not enforced), despite 'format' being an explicit objective of ISSUE-001; a formatting regression can merge silently.",
+    "Coverage is configured (@vitest/coverage-v8, vitest.config.ts) but not gated or even run in CI; the issue objective lists 'coverage'. At minimum a CI `pnpm coverage` step is expected.",
+    "`pnpm clean` is broken: `rimraf` is not declared anywhere; `pnpm -r exec rimraf dist coverage` fails and is silently swallowed by `|| true`.",
+    "Root engines declares `node >=20` but CI only tests node 22; several transitive deps (e.g. eslint-visitor-keys@5.0.1) require `^20.19 || ^22.13 || >=24`, so the declared support range is not actually verified.",
+    "packages/core `main`/`types` point to `./src/index.ts`; a raw Node consumer (no vitest/tsup) cannot import the package without a TS loader. publishConfig only fixes the published state, so workspace/runtime consumers break. The `pnpm build` output (dist/) is referenced by nothing.",
+    "AGENTS.md references `compatibility/deepseek-harness.json` and ADR-004/005 documents that do not exist at this PR's head — dangling references that mislead contributors until later commits land.",
+    "CI workflow has no `timeout-minutes` and no `concurrency` group; a hung step runs to GitHub's default limit and back-to-back pushes can queue duplicate full runs.",
+    "pnpm-workspace.yaml uses `allowBuilds: esbuild: true`; verify this is a recognized key for the pinned pnpm 11.4.0 — if ignored, esbuild's build script is silently not approved and works today only because esbuild ships prebuilt platform binaries.",
+    "The rule docstring overclaims coverage ('bypass forms are caught'); with the known gaps above this gives future reviewers false assurance about the repo's primary ADR-004 gate.",
+    "eslint rule has no scope analysis: a file that imports `exec` from child_process AND shadows it with a local `exec` will be falsely flagged (and conversely the untracked forms are missed)."
   ],
   "security": [
-    "ADR-004 enforcement gaps in eslint.config.js (see blocking #1): require-as-Identifier, computed member access, variable-held options, and createRequire are all undetected, so the ESLint gate the security policy depends on can be bypassed without any lint error.",
-    "SECURITY.md states 'No arbitrary shell execution ... shell: true is forbidden (ADR-004)' — this claim is only as strong as the lint rule, which the above cases defeat.",
-    "No actual shell-invoking code exists in this PR, so the gaps are latent guardrail weaknesses, not exploitable vulnerabilities today."
+    "BLOCKING (see blocking[0]): inline require/createRequire call chains, computed non-literal member access, options mutation, and shell-from-spread all evade the ADR-004 rule.",
+    "Direct shell-binary invocation `spawn(\"sh\"/\"bash\", [\"-c\", cmd])` is arbitrary shell execution equivalent to shell:true but is outside the rule's model entirely; either ADR-004's scope should be documented to exclude it, or binary-name detection should be added.",
+    "The rule is the sole automated enforcement of the repo's 'non-negotiable' no-shell invariant; its remaining holes mean plugin code can merge with shell execution and all gates stay green."
   ],
   "test_gaps": [
-    "tests/eslint-adr004.test.ts covers import/namespace/alias/require-destructure but has no cases for: `const cp = require('node:child_process')` + `cp.exec`, computed member access `cp['exec']`, a variable-held options object with shell:true, or createRequire-based access — the exact bypass classes this rule was written to close.",
-    "Smoke test asserts only CORE_VERSION; nothing verifies the CI contract (frozen-lockfile install, typecheck, lint, build) reproduces from a clean checkout, so a broken `pnpm clean`/rimraf or a NodeNext resolution regression would pass unnoticed.",
-    "No test exercises the required TDD RED phase (failing smoke test before core existed); the issue's 'Required Tests' only cover the GREEN end state.",
-    "Cross-platform gap: no CI step or test validates `pnpm clean` (which would surface the undeclared rimraf on both ubuntu and windows)."
+    "No regression tests for the four remaining bypass forms: inline `createRequire(...)(\"node:child_process\").execSync(...)`, `require(\"node:child_process\").exec(...)`, computed non-literal `cp[fn](...)`, and `opts.shell = true` post-mutation / shell-from-spread.",
+    "No test that `spawn(\"bash\", [\"-c\", ...])` is deliberately out of scope (or that it is caught) — the ADR-004 boundary is undefined and untested.",
+    "No test for shadowing: file imports `exec` from child_process and defines a local `exec` — the rule will false-positive; behavior is unspecified.",
+    "Smoke test only asserts the CORE_VERSION string; nothing exercises the `pnpm build` artifact (dist/) or verifies the published entry points."
   ],
   "compatibility": [
-    "Node engine floor (>=20) is below the pinned DeepSeek Harness requirement (>=22.19); root package.json and CONTRIBUTING.md should match the manifest.",
-    "pnpm pinned at 11.4.0 vs manifest upstream pin 11.7.0 — verify lockfile behavior against the pinned upstream before claiming harness compatibility.",
-    "CI matrix tests only node 22; the manifest notes upstream CI covers 22.19, 24, and 26 — add at least one additional major to catch version drift.",
-    "AGENTS.md/SECURITY.md reference harness integration contracts (permission hook API 'TBD', ISSUE-006/010) that are unverified against the pinned commit; the manifest itself marks these TBD, so claims in these docs should not be read as confirmed compatibility."
+    "Node matrix is only `[22]` on ubuntu+windows while engines says >=20 and the pinned upstream harness manifest requires >=22.19 (covers 22.19/24/26) — expand the matrix or narrow engines.",
+    "packageManager pnpm@11.4.0 vs upstream harness pin pnpm@11.7.0 — acceptable for a standalone repo but should be a deliberate decision, not silent drift.",
+    "`allowBuilds` key validity for pnpm 11.4.0 is unverified (see non_blocking)."
   ],
   "architecture": [
-    "ADR-004 enforcement lives only in the root eslint.config.js; per the Plugin Standard, every plugin package should inherit this gate, so the rule (and its regression tests) belong in the shared @dsh-forge/core contract test kit so plugin packages can't skip it.",
-    "AGENTS.md references a compatibility manifest that this PR does not commit, creating a chicken-and-egg for agents following its binding rules; commit the manifest or point to the separate PR.",
-    "packages/core advertises a runtime surface (process runner, diagnostics, workspace policy, contract test kit) that is not implemented, and has no exports map to later add `@dsh-forge/core/testing`; the metadata should reflect the currently shipped surface.",
-    "Root devDependency on `@dsh-forge/core` (workspace:*) is only needed for the root smoke test — acceptable, but consider moving the smoke test into packages/core/tests to keep the root dependency graph minimal."
+    "ADR-004 enforcement rests on a hand-rolled ~200-line binding-tracking ESLint rule embedded in eslint.config.js with no scope analysis; the primary control should remain the contract test kit + external review (rule is a backstop), and its documented claims should be corrected to match reality.",
+    "Dependencies declared with `workspace:*` for @dsh-forge/core at the root while also being a workspace package is workable but couples the root toolchain to the runtime package; consider whether the smoke test should target the built artifact."
   ],
-  "confidence": 0.8
+  "confidence": 0.82
 }
