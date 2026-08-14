@@ -5,8 +5,11 @@
  * cwd, env allowlist, timeout, AbortSignal, output caps, and secret
  * redaction. The full inherited environment is NEVER passed to the child.
  */
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+
+/** Grace period between SIGTERM and SIGKILL when terminating a process tree. */
+const KILL_ESCALATION_MS = 1000;
 
 export interface ExecutionRequest {
   /** Binary to execute. Absolute path recommended; must not be a shell line. */
@@ -120,6 +123,31 @@ function attachCapture(
   });
 }
 
+/**
+ * Terminate a child AND its descendants. On POSIX the child is spawned in its
+ * own process group (detached) so the whole group can be signalled; on
+ * Windows taskkill /T walks the tree. A child that ignores the graceful
+ * signal is escalated to SIGKILL after a grace period.
+ */
+function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (!child.pid) return;
+  if (process.platform === "win32") {
+    execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], () => {
+      // best-effort; 'close' on the child resolves the promise
+    });
+    return;
+  }
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      // already gone
+    }
+  }
+}
+
 /** Execute a binary with typed argv[] — no shell, ever. */
 export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> {
   const {
@@ -149,6 +177,9 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
         cwd,
         env: buildEnv(DEFAULT_ENV_ALLOWLIST, env),
         windowsHide: true,
+        // Detached on POSIX creates a process group so the whole tree can be
+        // terminated on timeout/abort; on Windows taskkill /T handles it.
+        detached: process.platform !== "win32",
       });
     } catch (err) {
       resolve({
@@ -164,10 +195,13 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
       return;
     }
 
+    let escalationTimer: ReturnType<typeof setTimeout> | undefined;
+
     const finish = (exitCode: number | null, error?: ExecutionError) => {
       if (settled) return;
       settled = true;
       if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+      if (escalationTimer !== undefined) clearTimeout(escalationTimer);
       if (signal) signal.removeEventListener("abort", onAbort);
       const apply = (state: CaptureState): string =>
         redact ? redactSecrets(state.data, redact) : state.data;
@@ -183,22 +217,30 @@ export function runProcess(request: ExecutionRequest): Promise<ExecutionResult> 
       });
     };
 
+    /** Graceful kill of the tree, escalating to SIGKILL after the grace period. */
+    function terminateTree(): void {
+      killTree(child, "SIGTERM");
+      escalationTimer = setTimeout(() => {
+        killTree(child, "SIGKILL");
+      }, KILL_ESCALATION_MS);
+    }
+
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     if (timeoutMs !== undefined) {
       timeoutTimer = setTimeout(() => {
         timedOut = true;
-        child.kill();
+        terminateTree();
       }, timeoutMs);
     }
 
     function onAbort(): void {
       aborted = true;
-      child.kill();
+      terminateTree();
     }
     if (signal) {
       if (signal.aborted) {
         aborted = true;
-        child.kill();
+        terminateTree();
       } else {
         signal.addEventListener("abort", onAbort, { once: true });
       }
