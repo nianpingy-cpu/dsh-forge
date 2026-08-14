@@ -9,6 +9,7 @@
 import { CORE_VERSION } from "../index.js";
 import { runProcess } from "../process/runner.js";
 import type { ExecutionRequest, ExecutionResult } from "../process/runner.js";
+import type { PermissionContext } from "../workspace/policy.js";
 import {
   type Plugin,
   type ToolContext,
@@ -60,6 +61,13 @@ export interface ContractSuiteOptions {
    * depending on real binaries/environment.
    */
   runner?: ExecutionRunner;
+  /**
+   * Permission context used for execution checks. Defaults to approved
+   * (`{ approved: true }`) so workspace-write tools (which gate on
+   * `ctx.permission`) can be exercised end-to-end by the kit; the denial
+   * path is verified by each plugin's own tests.
+   */
+  permission?: PermissionContext;
   /** Per-tool valid/invalid argument samples used by execution checks. */
   toolArgs: Record<string, ToolArgsSpec>;
 }
@@ -117,6 +125,7 @@ export async function runContractSuite(
   const ctx: ToolContext = {
     workspaceRoot: options.workspaceRoot,
     run: options.runner ?? runProcess,
+    permission: options.permission ?? { approved: true },
   };
 
   // 1. plugin loads
