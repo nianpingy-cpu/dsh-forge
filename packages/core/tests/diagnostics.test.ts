@@ -81,6 +81,19 @@ describe("toDiagnostic", () => {
     });
     expect(d.line).toBeUndefined();
   });
+
+  it("never crashes on null elements in a results array (regression)", () => {
+    const d = toDiagnostic("semgrep", null);
+    expect(d.tool).toBe("semgrep");
+    expect(d.severity).toBe("error");
+    expect(typeof d.message).toBe("string");
+  });
+
+  it("never crashes on non-object input (regression)", () => {
+    const d = toDiagnostic("semgrep", "not an object" as unknown as never);
+    expect(d.tool).toBe("semgrep");
+    expect(d.message.length).toBeGreaterThan(0);
+  });
 });
 
 describe("parseJsonOutput", () => {
