@@ -17,10 +17,11 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "build": "pnpm -r --filter './packages/*' run build",
+    "build": "pnpm -r run build",
     "clean": "pnpm -r exec rimraf dist coverage || true"
   },
   "devDependencies": {
+    "@dsh-forge/core": "workspace:*",
     "@eslint/js": "^9.30.0",
     "@vitest/coverage-v8": "^3.2.0",
     "eslint": "^9.30.0",
