@@ -8,6 +8,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 export interface CompatibilityManifest {
   repository: string;
@@ -118,4 +119,37 @@ export function formatResult(
     return `OK: ${manifestPath} is a valid compatibility manifest`;
   }
   return `INVALID: ${manifestPath}\n  - ${result.errors.join("\n  - ")}`;
+}
+
+/**
+ * Runnable entry point. Validates the manifest and prints the pinned SHA;
+ * exits 0 when valid, 1 when invalid. Defaults to the repo manifest, so CI
+ * can enforce the compatibility lock: `node scripts/verify-upstream.ts`.
+ */
+export function main(manifestPath = "compatibility/deepseek-harness.json"): number {
+  const result = readManifest(manifestPath);
+  if (!result.valid) {
+    console.error(formatResult(manifestPath, result));
+    return 1;
+  }
+  let commit = "(unknown)";
+  let branch = "";
+  try {
+    const raw = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      commit?: string;
+      branch?: string;
+    };
+    commit = raw.commit ?? "(missing)";
+    branch = raw.branch ?? "";
+  } catch {
+    // readManifest already validated; keep fallback values
+  }
+  console.log("OK: compatibility manifest is valid");
+  console.log(`Pinned DeepSeek Harness commit: ${commit} (${branch})`);
+  return 0;
+}
+
+// Run only when executed directly (not when imported by tests).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = main(process.argv[2] ?? "compatibility/deepseek-harness.json");
 }

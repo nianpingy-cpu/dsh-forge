@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readManifest, validateManifest } from "../scripts/verify-upstream.js";
+import { main, readManifest, validateManifest } from "../scripts/verify-upstream.js";
 
 const validManifest = {
   repository: "deepseek-ai/deepseek-harness",
@@ -96,5 +96,16 @@ describe("validateManifest", () => {
     );
     const result = readManifest(manifestPath);
     expect(result.valid).toBe(true);
+  });
+
+  it("main exits 0 for the real manifest (validator runs in CI)", () => {
+    const manifestPath = fileURLToPath(
+      new URL("../compatibility/deepseek-harness.json", import.meta.url),
+    );
+    expect(main(manifestPath)).toBe(0);
+  });
+
+  it("main exits 1 for a missing manifest", () => {
+    expect(main(join(tmpdir(), "no-such-manifest.json"))).toBe(1);
   });
 });

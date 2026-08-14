@@ -20,8 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Print pinned DeepSeek Harness SHA
-        run: node -e "const m=require('./compatibility/deepseek-harness.json');console.log('Pinned DeepSeek Harness commit:',m.commit,'('+m.branch+')')"
+      - name: Verify pinned DeepSeek Harness SHA (compatibility lock)
+        run: node scripts/verify-upstream.ts
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
