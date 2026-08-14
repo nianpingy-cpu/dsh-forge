@@ -285,15 +285,18 @@ describe("runProcess", () => {
   it("captures large fast-exit output with exact fidelity", async () => {
     // A child that writes >64 KB (larger than the pipe buffer) and exits
     // immediately must not lose its tail: 'exit' fires before stdio drains,
-    // so destroying the streams on 'exit' would drop the final chunk.
+    // so destroying the streams on 'exit' would drop the final chunk. The
+    // output is generated inside the child (fs.writeSync) to avoid the
+    // Windows command-line length limit.
     const chunk = "x".repeat(64 * 1024);
     const tail = "END-OF-OUTPUT";
+    const script =
+      `const fs = require("node:fs");` +
+      `const buf = Buffer.from('${chunk}${tail}');` +
+      `fs.writeSync(1, buf); process.exit(0);`;
     const result = await runProcess({
       binary: NODE,
-      args: [
-        "-e",
-        `process.stdout.write(${JSON.stringify(chunk + tail)}, () => process.exit(0))`,
-      ],
+      args: ["-e", script],
     });
     expect(result.truncated).toBe(false);
     expect(result.stdout.endsWith(tail)).toBe(true);
