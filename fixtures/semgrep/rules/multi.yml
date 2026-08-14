@@ -1,0 +1,11 @@
+rules:
+  - id: no-shell-true
+    languages: [python]
+    message: "Avoid shell=True in subprocess calls"
+    severity: WARNING
+    pattern: subprocess.run(..., shell=True)
+  - id: no-exec-sync
+    languages: [javascript]
+    message: "Avoid execSync with a command string"
+    severity: ERROR
+    pattern: $OBJ.execSync(...)

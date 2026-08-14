@@ -227,6 +227,49 @@ describe("semgrep_scan", () => {
     expect(result.error?.code).toBe("PermissionDenied");
   });
 
+  it("scans multiple languages from the committed multi fixture", async () => {
+    const result = await tool().execute(
+      { path: "multi", rules: "rules/multi.yml" },
+      ctx(semgrepRunner),
+    );
+    expect(result.ok).toBe(true);
+    const diags = result.diagnostics ?? [];
+    expect(diags.length).toBeGreaterThan(0);
+    // Findings normalized from both the committed Python and JavaScript files.
+    expect(diags.some((d) => d.file?.endsWith(".py"))).toBe(true);
+    expect(diags.some((d) => d.file?.endsWith(".js"))).toBe(true);
+  }, 30_000);
+
+  it("surfaces a parse error instead of reporting zero findings", async () => {
+    const parseErrJson = JSON.stringify({
+      version: "1.173.0",
+      results: [],
+      errors: [
+        {
+          type: "SemgrepError",
+          level: "error",
+          long_msg: "Parse error: app.py could not be parsed",
+        },
+      ],
+    });
+    const mock: ExecutionRunner = async () => ({
+      exitCode: 0,
+      stdout: parseErrJson,
+      stderr: "",
+      timedOut: false,
+      aborted: false,
+      truncated: false,
+      durationMs: 1,
+    });
+    const result = await tool().execute(
+      { path: "broken", rules: "rules/no-eval.yml" },
+      ctx(mock),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
+    expect(result.error?.message).toMatch(/Parse error/i);
+  });
+
   it("passes registry configs through verbatim (p/security-audit)", async () => {
     let captured: ExecutionRequest | undefined;
     const captureRunner: ExecutionRunner = async (req) => {
