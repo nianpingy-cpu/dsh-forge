@@ -43,13 +43,9 @@ const noShellExecRule = {
     /** Check whether an expression string-literal-equals one of CP sources. */
     /** @param {unknown} expr */
     function isChildProcessSource(expr) {
-      return (
-        expr != null &&
-        typeof expr === "object" &&
-        /** @type {import("estree").Literal | undefined} */ (expr).type === "Literal" &&
-        typeof /** @type {import("estree").Literal} */ (expr).value === "string" &&
-        CP.has(String(/** @type {import("estree").Literal} */ (expr).value))
-      );
+      if (expr == null || typeof expr !== "object") return false;
+      const record = /** @type {Record<string, unknown>} */ (expr);
+      return record.type === "Literal" && CP.has(String(record.value));
     }
 
     /**
