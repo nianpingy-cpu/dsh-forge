@@ -137,4 +137,65 @@ spawnSync("sh", ["-c", "ls"], { shell: true });`,
     );
     expect(shellViolations(messages)).toBeGreaterThan(0);
   });
+
+  // ---- regression round 2: binding forms flagged by re-review of PR #31 ----
+
+  it("flags exec via a plain require namespace binding", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `const cp = require("node:child_process");
+cp.exec("rm -rf /");`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
+
+  it("flags computed member access on a namespace binding", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `import * as cp from "node:child_process";
+cp["exec"]("rm -rf /");`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
+
+  it("flags spawn with a variable-held options object that has shell: true", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `import { spawn } from "node:child_process";
+const opts = { shell: true };
+spawn("sh", ["-c", cmd], opts);`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
+
+  it("allows spawn with a variable-held options object that has shell: false", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `import { spawn } from "node:child_process";
+const opts = { shell: false };
+spawn("ls", ["-la"], opts);`,
+      config,
+    );
+    expect(shellViolations(messages)).toBe(0);
+  });
+
+  it("flags destructured exec via createRequire", async () => {
+    const config = await loadConfig();
+    const linter = new Linter({ configType: "flat" });
+    const messages = linter.verify(
+      `import { createRequire } from "node:module";
+const req = createRequire(import.meta.url);
+const { exec } = req("node:child_process");
+exec("rm -rf /");`,
+      config,
+    );
+    expect(shellViolations(messages)).toBeGreaterThan(0);
+  });
 });
