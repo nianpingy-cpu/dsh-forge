@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, basename, dirname } from "node:path";
 import {
   resolveInWorkspace,
   WorkspaceViolationError,
@@ -71,6 +71,66 @@ describe("resolveInWorkspace", () => {
   it("handles Windows-style backslash separators", () => {
     const resolved = resolveInWorkspace(root, "src\\a.ts");
     expect(resolved).toBe(resolve(root, "src", "a.ts"));
+  });
+
+  // ---- regression: workspace boundary findings from review of PR #35 ----
+
+  it("rejects a case-colliding sibling path on case-sensitive filesystems", () => {
+    // On case-sensitive filesystems (Linux/macOS) a sibling directory whose
+    // name differs only by case must NOT be treated as inside the workspace.
+    // A naive toLowerCase() containment check would treat it as contained.
+    if (process.platform === "win32") return; // case-insensitive fs: untestable
+    const base = basename(root); // e.g. "dsh-ws-abc123"
+    const altBase = base.replace(/[a-z]/gi, (c) =>
+      c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase(),
+    );
+    if (altBase === base) return; // no letters to toggle (should not happen)
+    const alt = join(dirname(root), altBase);
+    mkdirSync(alt, { recursive: true });
+    try {
+      expect(() =>
+        resolveInWorkspace(root, join(alt, "evil.txt")),
+      ).toThrow(WorkspaceViolationError);
+    } finally {
+      rmSync(alt, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a canonicalized path, not the symlinked candidate", () => {
+    // Containment is verified against the realpath, so the returned write
+    // target must be that same canonical location — otherwise a symlink swap
+    // between check and write escapes the workspace (TOCTOU).
+    const linkPath = join(root, "src-link");
+    if (process.platform === "win32") {
+      symlinkSync(join(root, "src"), linkPath, "junction");
+    } else {
+      symlinkSync(join(root, "src"), linkPath);
+    }
+    try {
+      const resolved = resolveInWorkspace(root, join("src-link", "a.ts"));
+      expect(resolved).toBe(resolve(root, "src", "a.ts"));
+    } finally {
+      rmSync(linkPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a dangling symlink instead of misjudging containment", () => {
+    const danglingDir = join(root, "dangling-dir");
+    const target = join(outside, "does-not-exist");
+    try {
+      if (process.platform === "win32") {
+        // junction requires an existing target; a broken junction can't be
+        // created reliably, so exercise a non-writable-ancestor variant only
+        // on POSIX.
+        return;
+      }
+      symlinkSync(target, danglingDir);
+      expect(() =>
+        resolveInWorkspace(root, join("dangling-dir", "evil.txt")),
+      ).toThrow();
+    } finally {
+      rmSync(danglingDir, { recursive: true, force: true });
+    }
   });
 });
 
