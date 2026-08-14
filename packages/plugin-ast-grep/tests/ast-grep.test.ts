@@ -290,6 +290,26 @@ describe("ast_rewrite", () => {
     expect(result.error?.code).toBe("PermissionDenied");
   });
 
+  it("applies with no matching pattern as a clean no-op", async () => {
+    const dir = join(workspaceRoot, "rewrite-nomatch");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "n.js");
+    writeFileSync(file, "tick();\ntock();");
+    const result = await rewriteTool().execute(
+      {
+        mode: "apply",
+        pattern: "console.log($X)",
+        replacement: "console.info($X)",
+        language: "js",
+        paths: ["rewrite-nomatch/n.js"],
+      },
+      approvedCtx(),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/0 changes/);
+    expect(readFileSync(file, "utf8")).toBe("tick();\ntock();");
+  });
+
   it("rejects an empty paths array (no whole-workspace rewrite)", async () => {
     const result = await rewriteTool().execute(
       {

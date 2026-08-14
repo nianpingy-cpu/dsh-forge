@@ -105,7 +105,11 @@ function matchesToDiagnostics(
 async function runSg(
   ctx: ToolContext,
   args: readonly string[],
-): Promise<{ ok: true; stdout: string; stderr: string } | { ok: false; result: ToolResult }> {
+  opts: { noMatchIsOk?: boolean } = {},
+): Promise<
+  | { ok: true; stdout: string; stderr: string; exitCode: number }
+  | { ok: false; result: ToolResult }
+> {
   const binary = resolveSgBinary() ?? "sg";
   const execution = await ctx.run({
     binary,
@@ -136,9 +140,15 @@ async function runSg(
   }
   if (execution.exitCode !== 0) {
     // sg uses grep-like exit codes: 1 = no matches, with valid JSON on
-    // stdout. Only treat as failure when there is no parseable payload.
+    // stdout for read/search modes. Only treat as failure when there is no
+    // parseable payload.
     const head = execution.stdout.trimStart()[0];
     if (head !== "[" && head !== "{") {
+      // In apply mode (`--update-all`, no --json) a no-match run exits 1 with
+      // empty stdout. That is a legitimate no-op, not a failure.
+      if (opts.noMatchIsOk && execution.exitCode === 1 && execution.stdout.trim() === "") {
+        return { ok: true, stdout: execution.stdout, stderr: execution.stderr, exitCode: execution.exitCode };
+      }
       const firstLine =
         execution.stderr.trim().split("\n").find((l) => l.startsWith("Error:")) ??
         execution.stderr.trim().split("\n")[0] ??
@@ -146,7 +156,12 @@ async function runSg(
       return { ok: false, result: toolFailure(firstLine) };
     }
   }
-  return { ok: true, stdout: execution.stdout, stderr: execution.stderr };
+  return {
+    ok: true,
+    stdout: execution.stdout,
+    stderr: execution.stderr,
+    exitCode: execution.exitCode ?? 0,
+  };
 }
 
 /**
@@ -565,18 +580,24 @@ const astRewrite: ToolDefinition = {
       };
     }
 
-    // apply: `--update-all` rewrites the matched files in place.
-    const run = await runSg(ctx, [
-      "run",
-      "-p",
-      pattern,
-      "-r",
-      replacement,
-      "-l",
-      language,
-      "--update-all",
-      ...safe.absolute,
-    ]);
+    // apply: `--update-all` rewrites the matched files in place. With no
+    // matches, sg exits 1 with empty stdout (grep-style no-match); that is a
+    // clean no-op, so runSg is told to treat it as success.
+    const run = await runSg(
+      ctx,
+      [
+        "run",
+        "-p",
+        pattern,
+        "-r",
+        replacement,
+        "-l",
+        language,
+        "--update-all",
+        ...safe.absolute,
+      ],
+      { noMatchIsOk: true },
+    );
     if (!run.ok) return run.result;
     if (/ERROR node/i.test(run.stderr)) {
       return {
@@ -586,6 +607,16 @@ const astRewrite: ToolDefinition = {
           code: "ToolFailure",
           message: "ast-grep parsed the pattern with an ERROR node; pattern is not a valid AST pattern",
         },
+      };
+    }
+    if (run.exitCode === 1) {
+      return {
+        ok: true,
+        summary: "0 changes (no matches; nothing rewritten)",
+        raw:
+          run.stdout.length > 20_000
+            ? run.stdout.slice(0, 20_000) + "\n...[truncated]"
+            : run.stdout,
       };
     }
     return {
