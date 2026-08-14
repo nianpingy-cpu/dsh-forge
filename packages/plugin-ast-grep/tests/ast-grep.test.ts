@@ -188,13 +188,26 @@ describe("contract suite", () => {
   it("passes the shared plugin contract kit", async () => {
     const report = await runContractSuite(astGrepPlugin, {
       workspaceRoot,
+      // ast_search is the binary probe: with valid args it reaches ctx.run,
+      // and the kit's mock runner simulates a missing sg binary.
+      missingBinaryTool: "ast_search",
+      missingBinaryToolArgs: {
+        pattern: "foo($X)",
+        language: "ts",
+        paths: ["fixtures/sample.ts"],
+      },
       toolArgs: {
         ast_search: {
           valid: { pattern: "foo($X)", language: "ts", paths: ["fixtures/sample.ts"] },
           invalid: { pattern: 42 },
         },
         ast_scan: {
-          valid: { paths: ["fixtures/sample.js"] },
+          // A rule is required: `sg scan` without a project config fails, so
+          // the contract-suite valid invocation must include an inline rule.
+          valid: {
+            rule: "id: r\nlanguage: JavaScript\nrule:\n  pattern: console.log($X)",
+            paths: ["fixtures/sample.js"],
+          },
           invalid: { paths: "not-an-array" },
         },
         ast_inspect: {
@@ -210,6 +223,11 @@ describe("contract suite", () => {
         },
       },
     });
+    if (!report.passed) {
+      for (const check of report.checks) {
+        if (!check.passed) console.error("failed check:", check.name, check.detail);
+      }
+    }
     expect(report.passed).toBe(true);
   });
 });

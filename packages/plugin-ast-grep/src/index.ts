@@ -341,7 +341,7 @@ const astScan: ToolDefinition = {
         ok: true,
         summary: `${diagnostics.length} finding${diagnostics.length === 1 ? "" : "s"}`,
         diagnostics,
-        resultSummary: summarizeDiagnostics("ast-grep", diagnostics, { topN: 5 }),
+        summaryBlock: summarizeDiagnostics("ast-grep", diagnostics, { topN: 5 }),
         raw:
           run.stdout.length > 20_000
             ? run.stdout.slice(0, 20_000) + "\n...[truncated]"
