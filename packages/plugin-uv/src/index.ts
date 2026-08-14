@@ -155,6 +155,13 @@ const PATH_SCHEMA = {
     "workspace-relative path to the uv project (defaults to the workspace root)",
 };
 
+// ISSUE-014 permission mapping. MutationClass is single-valued; a tool whose
+// spec reads "network+process" (sync/python) or "workspace-write+network"
+// (add/remove) is declared with the most security-critical class it performs,
+// `network`, so a host that gates `network` separately surfaces approval for
+// it. uv_run (process only) stays `process`; uv_status/uv_tree stay `read`.
+const NETWORK_CLASS = "network" as const;
+
 const uvStatus: ToolDefinition = {
   name: "uv_status",
   description:
@@ -216,8 +223,8 @@ const uvTree: ToolDefinition = {
 const uvPython: ToolDefinition = {
   name: "uv_python",
   description:
-    "Locate the Python interpreter uv would use for the project (process).",
-  mutationClass: "process",
+    "Locate the Python interpreter uv would use for the project (network + process: may fetch managed Pythons).",
+  mutationClass: NETWORK_CLASS,
   inputSchema: {
     type: "object",
     properties: { projectDir: PATH_SCHEMA },
@@ -229,7 +236,7 @@ const uvPython: ToolDefinition = {
     const { projectDir } = validated.value as { projectDir?: string };
     const proj = resolveProject(ctx.workspaceRoot, projectDir);
     if (!proj.ok) return proj.result;
-    if (!assertPermission("process", ctx.permission ?? { approved: false })) {
+    if (!assertPermission(NETWORK_CLASS, ctx.permission ?? { approved: false })) {
       return permissionDenied();
     }
     const run = await runUv(ctx, ["python", "find"], {
@@ -245,8 +252,8 @@ const uvPython: ToolDefinition = {
 const uvSync: ToolDefinition = {
   name: "uv_sync",
   description:
-    "Sync the uv project environment (install/update dependencies) (process + network).",
-  mutationClass: "process",
+    "Sync the uv project environment (install/update dependencies) (network + process, requires permission approval).",
+  mutationClass: NETWORK_CLASS,
   inputSchema: {
     type: "object",
     properties: { projectDir: PATH_SCHEMA },
@@ -258,7 +265,7 @@ const uvSync: ToolDefinition = {
     const { projectDir } = validated.value as { projectDir?: string };
     const proj = resolveProject(ctx.workspaceRoot, projectDir);
     if (!proj.ok) return proj.result;
-    if (!assertPermission("process", ctx.permission ?? { approved: false })) {
+    if (!assertPermission(NETWORK_CLASS, ctx.permission ?? { approved: false })) {
       return permissionDenied();
     }
     const run = await runUv(ctx, ["sync"], { cwd: proj.project });
@@ -315,8 +322,8 @@ const uvRun: ToolDefinition = {
 const uvAdd: ToolDefinition = {
   name: "uv_add",
   description:
-    "Add a package dependency to the uv project (workspace-write + network, requires permission approval).",
-  mutationClass: "workspace-write",
+    "Add a package dependency to the uv project (network + workspace-write, requires permission approval).",
+  mutationClass: NETWORK_CLASS,
   inputSchema: {
     type: "object",
     properties: {
@@ -347,7 +354,7 @@ const uvAdd: ToolDefinition = {
     }
     const proj = resolveProject(ctx.workspaceRoot, projectDir);
     if (!proj.ok) return proj.result;
-    if (!assertPermission("workspace-write", ctx.permission ?? { approved: false })) {
+    if (!assertPermission(NETWORK_CLASS, ctx.permission ?? { approved: false })) {
       return permissionDenied();
     }
     const run = await runUv(ctx, ["add", ...packages], { cwd: proj.project });
@@ -359,8 +366,8 @@ const uvAdd: ToolDefinition = {
 const uvRemove: ToolDefinition = {
   name: "uv_remove",
   description:
-    "Remove a package dependency from the uv project (workspace-write + network, requires permission approval).",
-  mutationClass: "workspace-write",
+    "Remove a package dependency from the uv project (network + workspace-write, requires permission approval).",
+  mutationClass: NETWORK_CLASS,
   inputSchema: {
     type: "object",
     properties: {
@@ -391,7 +398,7 @@ const uvRemove: ToolDefinition = {
     }
     const proj = resolveProject(ctx.workspaceRoot, projectDir);
     if (!proj.ok) return proj.result;
-    if (!assertPermission("workspace-write", ctx.permission ?? { approved: false })) {
+    if (!assertPermission(NETWORK_CLASS, ctx.permission ?? { approved: false })) {
       return permissionDenied();
     }
     const run = await runUv(ctx, ["remove", ...packages], { cwd: proj.project });

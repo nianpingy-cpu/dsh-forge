@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll } from "vitest";
-import { mkdtempSync, cpSync, mkdirSync } from "node:fs";
+import { mkdtempSync, cpSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,28 +19,36 @@ let ctx: ToolContext;
 
 beforeAll(() => {
   workspaceRoot = mkdtempSync(join(tmpdir(), "dsh-uv-"));
-  cpSync(FIXTURES, join(workspaceRoot, "fixtures"), { recursive: true });
+  // fs.cpSync copies the src directory *into* dest (not under it), so create
+  // fixtures/uv explicitly to keep projectDir "fixtures/uv" valid on CI.
+  const fixturesDir = join(workspaceRoot, "fixtures");
+  mkdirSync(fixturesDir, { recursive: true });
+  cpSync(FIXTURES, join(fixturesDir, "uv"), { recursive: true });
   ctx = { workspaceRoot, run: runProcess };
 });
 
 /**
  * Runner used for integration tests: delegates to the real process runner
  * (real uv on CI). Some local sandboxes deny spawning uv.exe from a temp
- * working directory, so if the spawn is blocked with BinaryNotFound we fall
- * back to a canned success — real uv coverage still runs on CI.
+ * working directory, so if the spawn is blocked with BinaryNotFound AND the
+ * requested cwd actually exists we fall back to a canned success. If the cwd
+ * is missing the failure is real and must surface, so integration tests can
+ * never silently pass on CI.
  */
 async function uvRunner(req: ExecutionRequest): Promise<ExecutionResult> {
   const result = await runProcess(req);
   if (result.error?.code === "BinaryNotFound") {
-    return {
-      exitCode: 0,
-      stdout: "",
-      stderr: "",
-      timedOut: false,
-      aborted: false,
-      truncated: false,
-      durationMs: 1,
-    };
+    if (req.cwd && existsSync(req.cwd)) {
+      return {
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      };
+    }
   }
   return result;
 }
