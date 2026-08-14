@@ -1,0 +1,19 @@
+{
+  "name": "@dsh-forge/plugin-biome",
+  "version": "0.1.0",
+  "description": "Biome tools for DeepSeek Harness: check, lint, format check, fix, format (JS/TS/JSX/TSX/JSON)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean"
+  },
+  "dependencies": {
+    "@dsh-forge/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.0",
+    "tsup": "^8.5.0"
+  }
+}
