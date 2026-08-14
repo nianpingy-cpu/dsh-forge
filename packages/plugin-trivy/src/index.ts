@@ -339,39 +339,29 @@ function reportResult(
   };
 }
 
-/** Parse a CycloneDX SBOM JSON into component Diagnostics (type "sbom"). */
+/**
+ * `trivy sbom --format json` emits trivy's own report JSON
+ * (`{ ArtifactName, Results: [...] }`) — licenses/vulnerabilities found in the
+ * scanned SBOM document — NOT a CycloneDX document. Parse the report shape
+ * into Diagnostics tagged license:/vuln: (SBOM-derived findings).
+ */
 function sbomResult(
   workspaceRoot: string,
   run: { ok: true; stdout: string },
 ): ToolResult {
-  const parsed = parseJsonOutput(TOOL, run.stdout);
-  if (!parsed.ok) return parseFailure(parsed.error);
-  const data = parsed.value as Record<string, unknown>;
-  const components = Array.isArray(data?.components) ? data.components : [];
-  const metadataComponent = (
-    data?.metadata as { component?: { name?: unknown } } | undefined
-  )?.component?.name;
-  const diagnostics: Diagnostic[] = [];
-  for (const c of components as { name?: unknown; version?: unknown; type?: unknown }[]) {
-    const name = str(c.name) ?? "component";
-    const version = str(c.version);
-    diagnostics.push(
-      toDiagnostic(TOOL, {
-        severity: "info",
-        rule: `sbom:${name}`,
-        file: toRelativeFile(workspaceRoot, str(metadataComponent)),
-        message: version ? `${name}@${version}` : name,
-        suggestion: undefined,
-        fixable: false,
-      }),
-    );
-  }
+  const parsed = parseReport(run);
+  if (!parsed.ok) return parsed.result;
+  const diagnostics = findingsToDiagnostics(
+    workspaceRoot,
+    parsed.report.Results ?? [],
+    "license",
+  );
   return {
     ok: true,
     summary:
       diagnostics.length > 0
-        ? `${diagnostics.length} sbom component(s)`
-        : "no sbom components",
+        ? `${diagnostics.length} sbom finding(s)`
+        : "no sbom findings",
     diagnostics,
     summaryBlock:
       diagnostics.length > 0

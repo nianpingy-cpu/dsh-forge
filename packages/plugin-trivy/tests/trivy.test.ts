@@ -219,31 +219,18 @@ describe("trivy_image_scan", () => {
 describe("trivy_sbom", () => {
   const tool = () => trivyPlugin.tools.find((t) => t.name === "trivy_sbom")!;
 
-  it("parses SBOM components from CycloneDX JSON", async () => {
-    const cyclonedx = JSON.stringify({
-      bomFormat: "CycloneDX",
-      specVersion: "1.5",
-      metadata: { component: { name: "sbom", type: "application" } },
-      components: [
-        { type: "library", name: "lodash", version: "4.17.21" },
-        { type: "library", name: "express", version: "4.19.2" },
-      ],
-    });
-    const mock: ExecutionRunner = async () => ({
-      exitCode: 0,
-      stdout: cyclonedx,
-      stderr: "",
-      timedOut: false,
-      aborted: false,
-      truncated: false,
-      durationMs: 1,
-    });
-    const result = await tool().execute({ path: "sbom/package.json" }, ctx(mock));
+  it("parses SBOM findings from the committed report JSON", async () => {
+    // `trivy sbom --format json` emits trivy's report shape (licenses/vulns),
+    // which is exactly what fixtures/trivy/json/sbom-report.json records.
+    const result = await tool().execute(
+      { path: "sbom/cyclonedx.json" },
+      ctx(jsonRunner("sbom-report.json")),
+    );
     expect(result.ok).toBe(true);
-    expect(result.summary).toBe("2 sbom component(s)");
+    expect(result.summary).toBe("2 sbom finding(s)");
     const diags = result.diagnostics ?? [];
-    expect(diags[0]!.rule).toBe("sbom:lodash");
-    expect(diags[0]!.message).toBe("lodash@4.17.21");
+    expect(diags[0]!.rule).toBe("license:MIT");
+    expect(diags[1]!.rule).toBe("license:GPL-3.0");
   });
 
   it("denies without permission approval (network)", async () => {
@@ -281,10 +268,7 @@ describe("contract suite", () => {
       if (req.args[0] === "sbom") {
         return {
           exitCode: 0,
-          stdout: JSON.stringify({
-            bomFormat: "CycloneDX",
-            components: [{ name: "lodash", version: "4.17.21" }],
-          }),
+          stdout: readFileSync(join(FIXTURES, "json", "sbom-report.json"), "utf8"),
           stderr: "",
           timedOut: false,
           aborted: false,
@@ -326,7 +310,7 @@ describe("contract suite", () => {
           invalid: { image: 42 },
         },
         trivy_sbom: {
-          valid: { path: "sbom/package.json" },
+          valid: { path: "sbom/cyclonedx.json" },
           invalid: { path: 42 },
         },
       },
