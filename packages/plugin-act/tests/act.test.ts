@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { mkdtempSync, cpSync, existsSync, writeFileSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -149,6 +150,29 @@ const ctx = (runner: ExecutionRunner, approved = true): ToolContext => ({
 describe("resolveActBinary", () => {
   it("resolves the act binary from PATH", () => {
     expect(resolveActBinary()).toBeTruthy();
+  });
+
+  it("never returns a bare name (always an absolute path)", () => {
+    // A bare name would let Windows resolve act from the harness cwd (the
+    // analyzed workspace) before PATH — a repo-planted act.exe must not run.
+    expect(isAbsolute(resolveActBinary())).toBe(true);
+  });
+
+  it("yields BinaryNotFound via the sentinel path when act is not on PATH", async () => {
+    let binIsFile = false;
+    try {
+      binIsFile = statSync(resolveActBinary()).isFile();
+    } catch {
+      // sentinel (not installed) — expected on machines without act
+    }
+    if (binIsFile) return; // act installed; exercised on CI instead
+    const t = actPlugin.tools.find((x) => x.name === "act_list_workflows")!;
+    const result = await t.execute(
+      {},
+      { workspaceRoot, run: runProcess, permission: { approved: true } },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("BinaryNotFound");
   });
 });
 
