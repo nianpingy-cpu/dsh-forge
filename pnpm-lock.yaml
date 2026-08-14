@@ -14,6 +14,9 @@ importers:
       '@eslint/js':
         specifier: ^9.30.0
         version: 9.39.5
+      '@types/estree':
+        specifier: ^1.0.7
+        version: 1.0.9
       '@vitest/coverage-v8':
         specifier: ^3.2.0
         version: 3.2.7(vitest@3.2.7)
