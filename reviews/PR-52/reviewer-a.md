@@ -1,0 +1,52 @@
+# Review — reviewer-a
+
+- Verdict: **approve**
+- Confidence: 0.72
+
+## Blocking
+(none)
+
+## Non-blocking
+- False PASS semantics: the gate returns PASS when every security lane (semgrep/trivy) is skipped, and even when the only lane that ran is the lint lane (e.g. web project with biome missing, security lanes clean -> PASS with zero lint). It can therefore certify a project that received no security scan and no lint. This is tested/intentional per TDD RED ('tool missing' -> PASS), and the skipped lanes are disclosed in the summary/raw, but the single word verdict 'PASS' is misleading for a *security* gate. Recommend a distinct SKIPPED lane state that downgrades to PASS_WITH_WARNINGS, or a strict mode that fails when security lanes did not run.
+- summaryBlock is built from the capped diagnostics slice (summarizeDiagnostics('quality-gate', capped)), so its count/bySeverity/topIssues under-report for runs with >maxFindings findings, while the text summary reports full counts from all findings. The model receives two conflicting sets of numbers. Compute the summary block from all diagnostics (the truncation flag already exists in ResultSummary).
+- probeAvailable returns 'available' for any error that is not BinaryNotFound as long as exitCode is non-null (e.g. a ToolFailure with a numeric exit code is counted as available). A broken-but-present binary is therefore reported as available by quality_gate_status and only fails later inside quality_gate.
+- quality_gate returns ok:true even when the verdict is FAIL (tests assert r.ok === true with /FAIL/). Defensible as 'the tool ran successfully', but callers that key off `ok` (e.g. the contract kit's renderModelFacing and any harness that treats ok:false as terminal) will not see the FAIL without parsing the summary string.
+- detectLanguage silently degrades to 'generic' when `path` targets a single file (readdirSync on a file throws and is swallowed; marker checks are file/dir joins), so gating one file drops the lint lane entirely and runs only security lanes. The tool documents 'directory', but nothing validates it.
+- No overall timeout/abort on the gate: lanes run sequentially with the plugins' own timeouts (ruff/biome 30s, semgrep 120s, trivy 300s), so a worst-case gate call can block ~7.5 minutes with no outer deadline or AbortSignal.
+- The issue's Documentation requirement ('Update affected documentation in the same PR') is not met: no README/docs changes accompany the new plugin.
+- redactCredentials and isValidPathInput are copy-pasted from the trivy plugin; per the Plugin Standard's 'no infrastructure duplication' these belong in @dsh-forge/core rather than being re-implemented in a third package.
+- The lane aggregation loop protects only lane.tool.execute; diagnostics.push(...ds), computeVerdict, and summarizeDiagnostics run outside the try/catch. A lane returning a malformed diagnostics array (e.g. null element) would throw out of execute instead of being normalized to a lane error.
+- The contract suite test relies on the kit's mock runner returning empty JSON keyed by binary basename, so lane args are only indirectly exercised; a lane arg shape change (e.g. paths vs path) would be caught by the clean-PASS test but not by any assertion on the actual argv.
+
+## Security
+- Aggregated lane diagnostics (and the derived summaryBlock) are returned to the model WITHOUT the gate's credential redaction: redactCredentials is applied only to the gate's own raw JSON breakdown. Semgrep finding messages commonly embed matched source text via metavariable interpolation (e.g. 'found hardcoded secret `$SECRET`'), so a secret matched by a semgrep rule can reach the model through diagnostics/summaryBlock unredacted. The gate docstring claims redaction 'before a value reaches the model' — that intent is only half-implemented. (The trivy lane is safe: trivy_secret_scan redacts Match/Code and sets includeRaw:false.)
+- quality_gate_status is read/ungated and spawns binaries via ctx.run with no cwd override; the ruff and biome resolvers fall back to a bare name ('ruff'/'biome') when not found, and the semgrep/trivy resolvers explicitly document that on Windows a bare name can be resolved from the process cwd (the workspace) before PATH — so a repo-planted ruff.exe/biome.exe could be executed without a permission prompt. Pre-existing in the ruff/biome resolvers, but the new status tool is a fresh, ungated code path that exercises it; the probe should force the semgrep/trivy-style 'never bare name / random missing sentinel' invariant (or pass the resolved absolute path only).
+- A project can receive verdict PASS while both security lanes were skipped (only a clean lint lane ran) or while the lint lane was skipped (only a clean security lane ran). For a security gate this is a false-certification risk even though the skipped lanes are disclosed in the summary.
+- raw redaction is cosmetic and uneven: it never touches diagnostics (see first finding), and the user:pass regex can over-redact Windows-style paths containing '@' (cosmetic only).
+
+## Test gaps
+- No test for WorkspaceViolation / path-traversal rejection (`../x`, absolute escape) in either quality_gate or quality_gate_status, despite that code path being the tool's main boundary defense.
+- No tests for invalid path inputs: empty string, whitespace-only, leading dash, control characters.
+- No test for failOn: 'any'.
+- No tests for invalid maxFindings (0, negative, non-integer, >5000, string).
+- No test for a lane returning a normalized non-BinaryNotFound error (ToolFailure, Timeout, ParseFailure) mapped to FAIL with the lane recorded as 'error' — only a *throwing* lane is tested.
+- No assertion that the permission-denied path runs zero lanes (the mock runner is not verified as unused when approval is denied).
+- No quality_gate_status partial-availability test (e.g. only ruff present -> 1/3 available).
+- No generic-project (no markers) or extension-only web detection tests.
+- No test for the `truncated` flag or the summaryBlock-vs-full-counts inconsistency when diagnostics exceed maxFindings.
+- No test for redactCredentials behavior in either tool.
+- Live integration tests cover only the ruff lane; biome/semgrep/trivy real-binary paths are untested.
+
+## Compatibility
+- The gate hard-depends on exact tool `name`s (ruff_check, biome_check, semgrep_security_scan, trivy_secret_scan) and exported resolve*Binary functions across four plugin packages; a rename/refactor in any of them breaks the gate at import time rather than at runtime, since the lookups use `find(...)!` non-null assertions at module load.
+- Lanes are invoked with the gate's ctx/permission; today that is coherent (read lanes need no approval, semgrep asserts network and the gate already secured network). If a lane with a stricter mutationClass (workspace-write/process) is ever added, it would run under approval the gate never requested — the gate should re-assert per-lane permission if the lane set grows.
+- The ruff/biome bare-name fallback is inconsistent with the semgrep/trivy resolvers' documented 'never return a bare name' security invariant; the gate's probes inherit that inconsistency (see security findings).
+- quality_gate requires network approval even when only local read lanes would run (e.g. semgrep missing); conservative and honest, but users must approve network for what may be a purely local ruff/biome/trivy run — the ungated quality_gate_status is the intended workaround.
+- The plugin exports a named `qualityGatePlugin` with no default export — consistent with the existing ruff/biome/semgrep plugins but formally outside the Plugin Standard's 'Exports a default Plugin object' requirement; fine only because the host apparently imports named exports.
+- Biome probing depends on @biomejs/biome being resolvable via createRequire from the biome plugin's own package; this works in the workspace, but the gate's status tool will report biome unavailable (or probe bare 'biome') in environments where the npm shim isn't installed.
+
+## Architecture
+- Verdict/counts are computed on all findings (correct), but the model-facing summaryBlock is computed on the capped slice (inconsistent) — the two aggregation layers disagree about counts.
+- redactCredentials and isValidPathInput duplicate the trivy plugin's private helpers; should be promoted to @dsh-forge/core to satisfy the 'no infrastructure duplication' rule.
+- The lane loop leaves the aggregation steps (diagnostics.push, computeVerdict, summarizeDiagnostics) outside the try/catch; a malformed lane result would surface as an unhandled rejection rather than a normalized ToolResult.
+- No default export (see compatibility) — the Plugin Standard's default-export contract is unmet even if the current host tolerates it.
