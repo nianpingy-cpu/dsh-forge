@@ -121,6 +121,27 @@ describe("trivy_repo_scan", () => {
     expect(result.error?.code).toBe("PermissionDenied");
   });
 
+  it("sanitizes embedded credentials in failure messages", async () => {
+    const failRunner: ExecutionRunner = async () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr:
+        "FATAL repository https://TOKEN123@github.com/org/repo.git: not found",
+      timedOut: false,
+      aborted: false,
+      truncated: false,
+      durationMs: 1,
+    });
+    const result = await tool().execute(
+      { repo: "https://TOKEN123@github.com/org/repo.git" },
+      ctx(failRunner),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
+    expect(result.error?.message).not.toContain("TOKEN123");
+    expect(result.error?.message).toContain("***@");
+  });
+
   it("rejects an empty or leading-dash repo", async () => {
     const a = await tool().execute({ repo: "" }, ctx(trivyRunner));
     const b = await tool().execute({ repo: "--help" }, ctx(trivyRunner));

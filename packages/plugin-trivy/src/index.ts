@@ -52,11 +52,22 @@ function binaryNotFound(binary: string): ToolResult {
   };
 }
 
+/**
+ * Redact embedded credentials from text before it reaches the model: URLs
+ * like https://<token>@host/... and user:pass@host sequences (trivy/git may
+ * echo a repo URL into stderr on failure).
+ */
+function redactCredentials(text: string): string {
+  return text
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s/]+@/gi, "$1***@")
+    .replace(/([A-Za-z0-9_.-]+):([^@\s/]+)@/g, "$1:***@");
+}
+
 function toolFailure(message: string): ToolResult {
   return {
     ok: false,
     summary: "trivy failed",
-    error: { code: "ToolFailure", message },
+    error: { code: "ToolFailure", message: redactCredentials(message) },
   };
 }
 
