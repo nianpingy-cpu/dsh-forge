@@ -51,11 +51,21 @@ ast-grep · Ruff · Biome · uv · act · Semgrep · Trivy · Docker · k6 · FF
 
 ## Quality signals
 
-- Tests: 470 passing (21 files), typecheck/lint/build clean
+- Tests: 471 passing (21 files), typecheck/lint/build clean
 - CI: verify (ubuntu-latest + windows-latest, node 22) PASS
 - Every plugin PR reviewed by an independent external model (DeepSeek via local
   claude CLI) before merge; review artifacts committed under `reviews/`
 - All completion states proven by runnable tests / CI / real tool execution
+
+## Blocked sub-tasks (V0.1.0, explicitly marked per ISSUE-013 exit criteria)
+
+- **Real DeepSeek Harness integration** — blocked: the pinned compatibility
+  manifest lists the DSH permission-hook API as TBD; `tests/e2e/` proves the
+  preset → registration → typed-call → canonical-result flow via a
+  deterministic host shim, but no real-harness (Cordis) assertions are claimed.
+- **npm-publish** — blocked: V0.1.0 is released as a GitHub Release + tag, not
+  an npm publication; packages ship `publishConfig` so a future npm-publish
+  sub-task can consume built `dist/` output.
 
 ## Branch strategy note
 

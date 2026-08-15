@@ -17,30 +17,30 @@ export interface Preset {
   plugins: readonly Plugin[];
 }
 
-const coding: readonly Plugin[] = [astGrepPlugin, ruffPlugin, biomePlugin];
-const python: readonly Plugin[] = [ruffPlugin, uvPlugin];
-const web: readonly Plugin[] = [biomePlugin, astGrepPlugin];
+const coding = Object.freeze([astGrepPlugin, ruffPlugin, biomePlugin]);
+const python = Object.freeze([ruffPlugin, uvPlugin]);
+const web = Object.freeze([biomePlugin, astGrepPlugin]);
 
-export const PRESETS: readonly Preset[] = [
-  {
+export const PRESETS: readonly Preset[] = Object.freeze([
+  Object.freeze({
     name: "coding",
     description:
       "General-purpose coding: search/rewrite (ast-grep), Python lint/fix (Ruff), JS/TS/JSX/TSX lint+format (Biome)",
     plugins: coding,
-  },
-  {
+  }),
+  Object.freeze({
     name: "python",
     description:
       "Python development: lint/fix/format (Ruff) and environment/dependency management (uv)",
     plugins: python,
-  },
-  {
+  }),
+  Object.freeze({
     name: "web",
     description:
       "Web development: JS/TS/JSX/TSX lint+format (Biome) and search/rewrite (ast-grep)",
     plugins: web,
-  },
-];
+  }),
+]);
 
 /** Resolve a preset by name; undefined when the preset is unknown. */
 export function resolvePreset(name: string): Preset | undefined {
@@ -79,6 +79,12 @@ export function validatePreset(
       return {
         ok: false,
         error: `${plugin.metadata.name}: core contract ${plugin.metadata.coreContractVersion} != ${CORE_VERSION}`,
+      };
+    }
+    if (!Array.isArray(plugin.tools)) {
+      return {
+        ok: false,
+        error: `${plugin.metadata.name}: tools must be an array`,
       };
     }
     for (const tool of plugin.tools) {

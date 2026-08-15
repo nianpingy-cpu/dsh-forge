@@ -61,10 +61,18 @@ Presets resolve to registered plugins and are validated against the current core
 
 ## E2E
 
-`tests/e2e/` ships a minimal DeepSeek Harness-style host shim (`host.ts`) plus two suites:
+`tests/e2e/` ships a minimal host shim (`host.ts`) plus two suites:
 
 - **Deterministic no-API integration** — loads a real plugin, registers its tools, routes a typed call through the core contract, and asserts the canonical structured result (no model API).
-- **Real DSH E2E** — loads a preset, registers every tool, and routes a typed call to a structured result.
+- **Host-shim E2E (deterministic)** — loads a preset, registers every tool, and routes a typed call to a structured result.
+
+> **Blocked sub-task (V0.1.0):** real DeepSeek Harness integration (Cordis
+> plugin loading, host/client aggregation, DSH permission hook) is **explicitly
+> blocked** — the pinned compatibility manifest (`compatibility/deepseek-harness.json`)
+> lists the DSH permission-hook API as TBD, so no real-harness assertions can
+> be made yet. npm-publish is likewise a blocked sub-task (release is a
+> GitHub Release + tag). Per ISSUE-013's exit criteria, deferred sub-tasks are
+> marked blocked with everything else green.
 
 ## License
 

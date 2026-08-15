@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeAll } from "vitest";
-import { cpSync, mkdtempSync, statSync } from "node:fs";
+import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { cpSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,10 @@ let workspaceRoot: string;
 beforeAll(() => {
   workspaceRoot = mkdtempSync(join(tmpdir(), "dsh-e2e-"));
   cpSync(FIXTURES, workspaceRoot, { recursive: true });
+});
+
+afterAll(() => {
+  if (workspaceRoot) rmSync(workspaceRoot, { recursive: true, force: true });
 });
 
 const realRunner: ExecutionRunner = (req) => runProcess(req);

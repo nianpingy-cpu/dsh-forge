@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeAll } from "vitest";
-import { cpSync, mkdtempSync, statSync } from "node:fs";
+import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { cpSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,10 @@ beforeAll(() => {
   cpSync(FIXTURES, workspaceRoot, { recursive: true });
 });
 
+afterAll(() => {
+  if (workspaceRoot) rmSync(workspaceRoot, { recursive: true, force: true });
+});
+
 const realRunner: ExecutionRunner = (req) => runProcess(req);
 
 const ctx = (): ToolContext => ({
@@ -38,7 +42,13 @@ try {
   // not installed
 }
 
-describe("real DSH E2E (load plugin, model calls tool, structured result)", () => {
+// Deterministic host-shim E2E. Real DeepSeek Harness integration (Cordis
+// plugin loading, host/client aggregation, DSH permission hook) is a BLOCKED
+// sub-task for V0.1.0: the pinned compatibility manifest lists the DSH
+// permission_hook_api as TBD, so no real-harness assertions can be made yet.
+// This shim proves the preset -> registration -> typed-call -> canonical
+// result flow deterministically, without claiming to be the real harness.
+describe("host-shim E2E (deterministic; real DSH integration is a blocked sub-task)", () => {
   describe("preset resolution (no binary required)", () => {
     it("unknown preset fails to load (no plugin code duplication, config only)", () => {
       expect(() => resolvePresetOrThrow("not-a-preset")).toThrow(
