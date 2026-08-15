@@ -1,0 +1,38 @@
+{
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "default",
+    "groups": [],
+    "checks": [],
+    "metrics": ["http_req_duration", "http_req_failed", "iterations"]
+  },
+  "metrics": {
+    "http_req_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 412.5,
+        "min": 40.2,
+        "med": 380.0,
+        "max": 1220.3,
+        "p(90)": 620.1,
+        "p(95)": 820.4
+      },
+      "thresholds": [
+        { "name": "p(95)<500", "ok": false },
+        { "name": "p(90)<600", "ok": false }
+      ]
+    },
+    "http_req_failed": {
+      "type": "rate",
+      "contains": "default",
+      "values": { "rate": 0.2, "passes": 800, "fails": 200 }
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": { "count": 1000, "rate": 8.33 }
+    }
+  }
+}
