@@ -1,0 +1,34 @@
+# Review — reviewer-a
+
+- Verdict: **approve**
+- Confidence: 0.82
+
+## Blocking
+(none)
+
+## Non-blocking
+- {"file":"fixtures/e2e/container-app/docker-compose.yml","summary":"Story D hard-codes host port 8080 in the compose file, k6 script, and waitForHttp; the skip gate never checks port availability, so an occupied 8080 fails (not skips) the test and two concurrent runs on one host collide — a determinism violation for a suite whose issue demands 'deterministic where possible'."}
+- {"file":"tests/e2e/stories/env.ts","summary":"daemonAvailable gates on `docker version`, but the plugins' own detectDocker probes `docker info`; the two are not equivalent (a client-only `docker version` can exit 0 with a down daemon), so stories C/D can run and then fail with a confusing 'Docker is not available' ToolFailure instead of skipping."}
+- {"file":"tests/e2e/stories/story-c-act.test.ts","summary":"The first assertion `failing.error?.code === 'ToolFailure'` also passes when act fails for environmental reasons (image pull failure, daemon unreachable), so the 'failing workflow' leg of the story is not actually proven unless the second act_run also succeeds; only a false-green on the first leg, but a weaker story signal than the message implies."}
+- {"file":"tests/e2e/stories/env.ts","summary":"waitForHttp has no per-request timeout (no AbortSignal.timeout); a server that accepts but never responds leaves `fetch` pending, and the loop burns the full 600s vitest budget before teardown runs."}
+- {"file":"tests/e2e/stories/story-d-docker-k6.test.ts","summary":"The test timeout (600s) is shared across two act-style budgets but the two k6/docker legs are sequential; worst case the first act/docker leg consumes its own 600s cap and vitest kills the test before the second leg — a shared-budget mismatch, not just per-invocation timeouts."}
+- {"file":"tests/e2e/stories/story-e-ffmpeg.test.ts","summary":"cpSync copies the whole shared fixtures/ffmpeg directory (tiny.wav + tiny.mp4) into the temp workspace rather than just the file under test; harmless today but brittle if larger fixtures are added to that directory later."}
+- {"file":"tests/e2e/stories/story-d-docker-k6.test.ts","summary":"The `checks[.:]+\\s*100...%` regex and `/all thresholds passed/` summary match are coupled to k6's terminal summary layout and the plugin's exact summary strings; k6 has changed its summary formatting across versions. Deterministic on CI (k6 pinned v0.53.0) but version-fragile for local runs."}
+
+## Security
+- {"file":"tests/e2e/stories/env.ts","summary":"daemonAvailable executes a bare `docker` name via execFileSync, contradicting the repo's own security invariant (documented in every plugin binary.ts) that bare binary names must never be spawned because Windows CreateProcess searches the parent cwd first. Cwd here is the repo root, not an untrusted workspace, so risk is theoretical — but the probe should use resolveDockerBinary() to stay consistent with the security model."}
+- {"file":"fixtures/e2e/semgrep-unsafe/app.py","summary":"Fixture contains eval() and subprocess.run(shell=True) — inert data, never executed by the tests; only semgrep reads it. No issue. All subprocess execution in this PR is typed argv with no shell; no command injection or path traversal found."}
+
+## Test gaps
+- {"file":"tests/e2e/stories/story-a-ruff.test.ts","summary":"No assertion that the story suites actually executed rather than silently skipped. describe.skipIf produces a green run if a binary resolver regresses or a binary is absent, which can make the acceptance criterion 'all five stories green on CI' vacuous. Recommend a story-run-status report or a CI step that fails if the intended stories were skipped."}
+- {"file":"tests/e2e/stories/story-b-semgrep.test.ts","summary":"Stories A and B assert only diagnostics.length > 0, not the specific rule codes (F401 for story A; both no-eval and no-shell-true for story B). A scan that returns any unrelated finding would pass the first leg without proving the story's claimed detections."}
+- {"file":"tests/e2e/stories/story-e-ffmpeg.test.ts","summary":"Story E verifies only that the clip still probes as h264; it never asserts the clip duration (~0.5s) or that the clip boundary was honored, so a wrongly-trimmed output would still pass."}
+- {"file":"tests/e2e/stories/story-d-docker-k6.test.ts","summary":"Story D asserts status 200 and threshold pass but never checks the response body ('hello from dsh-forge e2e container'); a different app behind the port would pass."}
+
+## Compatibility
+- {"file":".github/workflows/ci.yml","summary":"CI pins act v0.2.89, k6 v0.53.0, and ffmpeg (apt/setup-ffmpeg) but installs ruff and semgrep as floating 'latest' via pip; upstream output/exit-code changes can break stories A/B independently of the repo, and the semgrep story depends on semgrep's default exit-0-with-findings behavior."}
+- {"file":"tests/e2e/stories/story-c-act.test.ts","summary":"The DeepSeek-Harness acceptance criterion 'all five green on CI' is only fully exercised on the Linux job; on the Windows job act/k6/Docker are absent so stories C/D skip by design, and story D additionally requires Docker Hub egress (python:3.12-alpine pull)."}
+
+## Architecture
+- {"file":"tests/e2e/stories/env.ts","summary":"The story tests reimplement binary/daemon detection (statSync(resolveXBinary()) + daemonAvailable) instead of deriving availability from the plugin's own BinaryNotFound/ToolFailure semantics, so the skip gates and the plugins' runtime detection can drift apart (bare-name `docker version` vs resolver + `docker info`)."}
+- {"file":"tests/e2e/stories/story-a-ruff.test.ts","summary":"Tests always pass permission: {approved: true}, which is right for E2E, but it means the plugins' PermissionDenied gate path is never exercised by the stories; acceptable since the contract test kit covers it, but the stories would not catch a regression that denied-all."}
