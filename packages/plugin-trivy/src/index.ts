@@ -189,6 +189,23 @@ async function runTrivy(
     if (execution.error) {
       return { ok: false, result: toolFailure(execution.error.message) };
     }
+    // A null exit code means trivy died from a signal (OOM-kill, segfault,
+    // ...) without a clean exit. Treating it as success could report a false
+    // negative from a security scanner, so surface it as a ToolFailure.
+    if (execution.exitCode === null) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          summary: "trivy terminated abnormally",
+          error: {
+            code: "ToolFailure",
+            message:
+              "trivy was killed or crashed (no exit code); the scan result is unreliable",
+          },
+        },
+      };
+    }
     return {
       ok: true,
       stdout: execution.stdout,
@@ -198,8 +215,15 @@ async function runTrivy(
   } finally {
     // The runtime dir is a private scratch cwd (trivy must not read a
     // repo-planted .trivyignore); always remove it so repeated scans do not
-    // accumulate empty temp directories in the OS temp.
-    rmSync(runtime, { recursive: true, force: true });
+    // accumulate empty temp directories in the OS temp. Cleanup is
+    // best-effort: on Windows the OS can briefly hold a handle to a former
+    // child cwd (EBUSY/EPERM) and a throw here must never turn a successful
+    // scan into an unhandled rejection.
+    try {
+      rmSync(runtime, { recursive: true, force: true });
+    } catch {
+      // best-effort: the dir lives under the OS temp and will be reaped.
+    }
   }
 }
 

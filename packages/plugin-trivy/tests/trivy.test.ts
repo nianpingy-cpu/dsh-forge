@@ -233,6 +233,29 @@ describe("trivy_repo_scan", () => {
     expect(result.summary).toContain("first 1000 shown");
   });
 
+  it("treats a null exit code (killed/crashed trivy) as a ToolFailure, not success", async () => {
+    // Core's runProcess returns exitCode: null when the child dies from a
+    // signal (OOM-kill/segfault). A complete-looking report must NOT be
+    // reported as a false-negative "no vulnerabilities".
+    const killRunner: ExecutionRunner = async () => ({
+      exitCode: null,
+      stdout: JSON.stringify({ ArtifactName: "repo", Results: [] }),
+      stderr: "",
+      timedOut: false,
+      aborted: false,
+      truncated: false,
+      durationMs: 1,
+    });
+    const result = await tool().execute(
+      { repo: "https://example.com/repo.git" },
+      ctx(killRunner),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
+    expect(result.error?.message).toMatch(/killed|crashed/i);
+    expect(result.summary).toBe("trivy terminated abnormally");
+  });
+
   it("locks the vulnerability report shape with real trivy (DB-dependent; skips when DB unavailable)", async () => {
     if (!hasRealTrivy) return;
     const res = await trivyRunner({
