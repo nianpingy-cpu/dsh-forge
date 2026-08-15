@@ -41,6 +41,9 @@ importers:
       '@dsh-forge/plugin-uv':
         specifier: workspace:*
         version: link:packages/plugin-uv
+      '@dsh-forge/presets':
+        specifier: workspace:*
+        version: link:presets/presets
       '@eslint/js':
         specifier: ^9.30.0
         version: 9.39.5
@@ -179,6 +182,28 @@ importers:
       '@dsh-forge/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.26)(typescript@5.9.3)
+
+  presets/presets:
+    dependencies:
+      '@dsh-forge/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@dsh-forge/plugin-ast-grep':
+        specifier: workspace:*
+        version: link:../../packages/plugin-ast-grep
+      '@dsh-forge/plugin-biome':
+        specifier: workspace:*
+        version: link:../../packages/plugin-biome
+      '@dsh-forge/plugin-ruff':
+        specifier: workspace:*
+        version: link:../../packages/plugin-ruff
+      '@dsh-forge/plugin-uv':
+        specifier: workspace:*
+        version: link:../../packages/plugin-uv
     devDependencies:
       tsup:
         specifier: ^8.5.0
