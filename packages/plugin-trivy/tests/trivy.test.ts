@@ -256,6 +256,32 @@ describe("trivy_repo_scan", () => {
     expect(result.summary).toBe("trivy terminated abnormally");
   });
 
+  it("surfaces malformed-but-valid trivy JSON as a ParseFailure (never a crash or false-negative clean scan)", async () => {
+    const bodies = [
+      { Results: [null] },
+      { Results: [{ Vulnerabilities: {} }] },
+      { Results: [{ Target: "x", Misconfigurations: {} }] },
+      { Results: { not: "an array" } },
+    ];
+    for (const body of bodies) {
+      const mock: ExecutionRunner = async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify(body),
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      });
+      const result = await tool().execute(
+        { repo: "https://example.com/repo.git" },
+        ctx(mock),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe("ParseFailure");
+    }
+  });
+
   it("locks the vulnerability report shape with real trivy (DB-dependent; skips when DB unavailable)", async () => {
     if (!hasRealTrivy) return;
     const res = await trivyRunner({

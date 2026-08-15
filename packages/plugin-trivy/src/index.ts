@@ -332,6 +332,40 @@ function parseReport(run: {
   if (typeof data !== "object" || data === null) {
     return { ok: false, result: parseFailure("trivy: expected a JSON object") };
   }
+  // Strict shape validation: malformed-but-valid JSON (a proxy/error envelope
+  // returned with exit 0, or a null/object entry inside Results) must surface
+  // as a ParseFailure — never a crash (unhandled rejection) and never a
+  // false-negative "clean" scan from a security scanner.
+  if (data.Results !== undefined && !Array.isArray(data.Results)) {
+    return {
+      ok: false,
+      result: parseFailure("trivy: expected Results to be an array"),
+    };
+  }
+  for (const entry of (data.Results as unknown[] | undefined) ?? []) {
+    if (typeof entry !== "object" || entry === null) {
+      return {
+        ok: false,
+        result: parseFailure(
+          "trivy: malformed Results entry (expected an object)",
+        ),
+      };
+    }
+    for (const key of [
+      "Vulnerabilities",
+      "Misconfigurations",
+      "Secrets",
+      "Licenses",
+    ]) {
+      const value = (entry as Record<string, unknown>)[key];
+      if (value !== undefined && !Array.isArray(value)) {
+        return {
+          ok: false,
+          result: parseFailure(`trivy: malformed ${key} (expected an array)`),
+        };
+      }
+    }
+  }
   return { ok: true, report: data as unknown as TrivyReport };
 }
 
@@ -356,6 +390,10 @@ function findingsToDiagnostics(
     if (diagnostics.length < MAX_DIAGNOSTICS) diagnostics.push(d);
   };
   for (const r of results) {
+    // Defense in depth: parseReport already rejects non-object entries, but a
+    // malformed entry must never crash the loop if this is ever called with
+    // unvalidated results.
+    if (typeof r !== "object" || r === null) continue;
     const file = toRelativeFile(
       workspaceRoot,
       str(r.Target),
