@@ -225,28 +225,35 @@ function isPlaylistPath(p: string): boolean {
 }
 
 /**
- * Dereferencing manifest signatures: HLS (#EXTM3U/#EXTINF), DASH MPD and
- * Smooth Streaming are XML documents (<?xml ...?><MPD ... / <SmoothStreamingMedia
- * ...). ffmpeg auto-detects these demuxers by content, so a renamed manifest
- * (e.g. photo.mp4) would still dereference external files; this signature set
- * catches the dereferencing container families.
+ * Dereferencing manifest markers that ffmpeg auto-detects by content
+ * (av_stristr substring scan over its ~32 KiB probe buffer): HLS (#EXTM3U /
+ * #EXTINF), DASH MPD and Smooth Streaming. Detection must match ffmpeg's own
+ * scan (bare substring anywhere in the head, case-insensitive), so a renamed
+ * or padded manifest is caught regardless of a leading DOCTYPE/comment.
  */
-const MANIFEST_SIGNATURE =
-  /^\s*(#EXTM3U|#EXTINF)|^\s*<\?xml[^>]*>\s*<(MPD|SmoothStreamingMedia)|^\s*<(MPD|SmoothStreamingMedia)/i;
+const MANIFEST_MARKERS = [
+  "#extm3u",
+  "#extinf",
+  "<mpd",
+  "<smoothstreamingmedia",
+] as const;
+
+const PROBE_BUFFER_BYTES = 32 * 1024; // ffmpeg's probe buffer size
 
 /**
- * True when the file's leading bytes look like a dereferencing manifest.
- * ffmpeg auto-detects HLS/DASH/Smooth demuxers by content, not extension, so a
- * renamed manifest would still dereference external files; this bounded 2 KiB
- * head read catches it without loading a large media file.
+ * True when the file's leading bytes contain a dereferencing manifest marker
+ * anywhere (ffmpeg auto-detects HLS/DASH/Smooth by content, not extension, so
+ * a renamed manifest would still dereference external files). This bounded
+ * head read mirrors ffmpeg's probe scan without loading a large media file.
  */
 function hasPlaylistSignature(absolute: string): boolean {
   let fd: number | undefined;
   try {
     fd = openSync(absolute, "r");
-    const buf = Buffer.alloc(2048);
+    const buf = Buffer.alloc(PROBE_BUFFER_BYTES);
     const n = readSync(fd, buf, 0, buf.length, 0);
-    return MANIFEST_SIGNATURE.test(buf.subarray(0, n).toString("utf8"));
+    const head = buf.subarray(0, n).toString("utf8").toLowerCase();
+    return MANIFEST_MARKERS.some((m) => head.includes(m));
   } catch {
     // unreadable/missing input — let ffmpeg report it
     return false;

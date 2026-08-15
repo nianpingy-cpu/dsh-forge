@@ -396,10 +396,13 @@ describe("tool-specific validation", () => {
     expect(written.error?.message).toMatch(/manifest|playlist/i);
   });
 
-  it("rejects a DASH MPD manifest by content signature", async () => {
+  it("rejects a DASH MPD manifest by content signature (even with a DOCTYPE prefix)", async () => {
+    // ffmpeg's dash demuxer scans the whole probe buffer for the bare <MPD
+    // substring (case-insensitive), so a DOCTYPE between <?xml?> and <MPD must
+    // not bypass the guard.
     writeFileSync(
       join(workspaceRoot, "clip.mpd"),
-      '<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"><BaseURL>file:///tmp/private/video.mp4</BaseURL></MPD>',
+      '<?xml version="1.0"?>\n<!DOCTYPE MPD SYSTEM "http://www.example.com/mpd.dtd">\n<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"><BaseURL>file:///tmp/private/video.mp4</BaseURL></MPD>',
       "utf8",
     );
     const probe = () =>
@@ -408,6 +411,23 @@ describe("tool-specific validation", () => {
     expect(probed.ok).toBe(false);
     expect(probed.error?.code).toBe("InvalidArguments");
     expect(probed.error?.message).toMatch(/manifest|playlist/i);
+
+    // A renamed manifest (media extension) with padding before <MPD is caught
+    // by the 32 KiB probe-buffer scan too.
+    writeFileSync(
+      join(workspaceRoot, "photo.mp4"),
+      "<!-- " + "x".repeat(3000) + " -->\n<MPD><BaseURL>file:///tmp/secret.mp4</BaseURL></MPD>",
+      "utf8",
+    );
+    const transcode = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "video_transcode")!;
+    const written = await transcode().execute(
+      { input: "photo.mp4", output: "o.wav" },
+      ctx(mockRunner()),
+    );
+    expect(written.ok).toBe(false);
+    expect(written.error?.code).toBe("InvalidArguments");
+    expect(written.error?.message).toMatch(/manifest|playlist/i);
   });
 
   it("does not rewrite backslashes into traversal in the concat list (POSIX)", async () => {
