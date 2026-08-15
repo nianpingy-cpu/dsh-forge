@@ -660,38 +660,72 @@ describe("robustness", () => {
 });
 
 describe("live ffmpeg (opt-in)", () => {
-  it("probes and clips a self-generated tiny media file when ffmpeg is installed", async () => {
-    if (!hasRealFfmpeg || !hasRealFfprobe) return;
-    const gen = await realRunner({
-      binary: resolveFfmpegBinary(),
-      args: [
-        "-y",
-        "-f",
-        "lavfi",
-        "-i",
-        "testsrc=duration=1:size=64x64:rate=10",
-        join(workspaceRoot, "tiny.mp4"),
-      ],
-      cwd: workspaceRoot,
-      timeoutMs: 30_000,
-    });
-    if (gen.error || gen.exitCode !== 0) return; // environment cannot run ffmpeg; skip
+  // Real-binary integration: these run the actual upstream ffmpeg/ffprobe
+  // against the committed fixtures (fixtures/ffmpeg/tiny.wav + tiny.mp4).
+  // CI installs ffmpeg so they execute there; locally they skip when the
+  // binaries are not on PATH.
+  const live = hasRealFfmpeg && hasRealFfprobe;
+
+  it("probes the committed tiny.mp4 fixture and reports its real streams", async () => {
+    if (!live) return;
     const probe = () =>
       ffmpegPlugin.tools.find((t) => t.name === "media_probe")!;
-    const probed = await probe().execute(
-      { input: "tiny.mp4" },
-      ctx(realRunner),
-    );
+    const probed = await probe().execute({ input: "tiny.mp4" }, ctx(realRunner));
     expect(probed.ok).toBe(true);
-    const clip = () =>
-      ffmpegPlugin.tools.find((t) => t.name === "video_clip")!;
-    const clipped = await clip().execute(
-      { input: "tiny.mp4", start: "0", duration: "0.5", output: "clip.mp4" },
-      ctx(realRunner),
-    );
-    expect(clipped.ok).toBe(true);
-    expect(existsSync(join(workspaceRoot, "clip.mp4"))).toBe(true);
+    // tiny.mp4 carries h264 (video) + aac (audio) streams.
+    expect(probed.raw).toMatch(/h264/);
+    expect(probed.raw).toMatch(/aac/);
   }, 60_000);
+
+  it("runs every write tool against the real ffmpeg binary and committed fixtures", async () => {
+    if (!live) return;
+    const tool = (n: string) =>
+      ffmpegPlugin.tools.find((t) => t.name === n)!;
+    const cases: Array<{ name: string; args: Record<string, unknown>; out: string }> = [
+      // tiny.mp4 (h264 video + aac audio, 1s) exercises the video tool class;
+      // tiny.wav exercises the audio-only path.
+      {
+        name: "video_clip",
+        args: { input: "tiny.mp4", start: "0", duration: "0.5", output: "clip.mp4" },
+        out: "clip.mp4",
+      },
+      {
+        name: "video_transcode",
+        args: { input: "tiny.mp4", output: "trans.mp4" },
+        out: "trans.mp4",
+      },
+      {
+        name: "video_concat",
+        args: { inputs: ["tiny.mp4", "tiny.mp4"], output: "concat.mp4" },
+        out: "concat.mp4",
+      },
+      {
+        name: "audio_extract",
+        args: { input: "tiny.mp4", output: "audio.m4a" },
+        out: "audio.m4a",
+      },
+      {
+        name: "audio_convert",
+        args: { input: "tiny.wav", output: "out.mp3" },
+        out: "out.mp3",
+      },
+      {
+        name: "thumbnail_generate",
+        args: { input: "tiny.mp4", time: "0", output: "thumb.png" },
+        out: "thumb.png",
+      },
+      {
+        name: "media_compress",
+        args: { input: "tiny.mp4", crf: 30, output: "comp.mp4" },
+        out: "comp.mp4",
+      },
+    ];
+    for (const c of cases) {
+      const r = await tool(c.name).execute(c.args as never, ctx(realRunner));
+      expect(r.ok, `${c.name}: ${r.error?.message ?? r.summary}`).toBe(true);
+      expect(existsSync(join(workspaceRoot, c.out)), `${c.name} output missing`).toBe(true);
+    }
+  }, 120_000);
 });
 
 describe("default export", () => {
