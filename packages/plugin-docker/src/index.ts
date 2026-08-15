@@ -101,13 +101,14 @@ async function runDocker(
   { ok: true; exec: DockerExec } | { ok: false; result: ToolResult }
 > {
   const binary = resolveDockerBinary();
+  const timeoutMs = opts.timeoutMs ?? 60_000;
   let exec: ExecutionResult;
   try {
     exec = await ctx.run({
       binary,
       args: [...args],
       cwd: ctx.workspaceRoot,
-      timeoutMs: opts.timeoutMs ?? 60_000,
+      timeoutMs,
       maxOutputBytes: 10 * 1024 * 1024,
     });
   } catch (err) {
@@ -122,7 +123,7 @@ async function runDocker(
       result: {
         ok: false,
         summary: "docker timed out",
-        error: { code: "Timeout", message: "docker exceeded the 60000ms timeout" },
+        error: { code: "Timeout", message: `docker exceeded the ${timeoutMs}ms timeout` },
       },
     };
   }
@@ -272,6 +273,18 @@ function isValidName(value: unknown): value is string {
     value.trim() !== "" &&
     !/^\s*-/.test(value) &&
     !/\s/.test(value)
+  );
+}
+
+/**
+ * Reject empty or leading-dash workspace paths (flag injection). Spaces are
+ * legal in paths and safe as a single argv element, so they are allowed here
+ * (unlike container names, which docker itself forbids from containing
+ * whitespace).
+ */
+function isValidPathInput(value: unknown): value is string {
+  return (
+    typeof value === "string" && value.trim() !== "" && !/^\s*-/.test(value)
   );
 }
 
@@ -458,7 +471,7 @@ const dockerComposeStatus: ToolDefinition = {
     const { path } = validated.value as { path?: string };
     let argv: string[];
     if (path !== undefined) {
-      if (!isValidName(path)) {
+      if (!isValidPathInput(path)) {
         return invalid("path must be a non-empty workspace path");
       }
       let absolute: string;
