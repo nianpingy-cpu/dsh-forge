@@ -157,18 +157,13 @@ describe("media_probe (read)", () => {
   });
 
   it("surfaces malformed JSON as a ParseFailure", async () => {
-    const runner = mockRunner({
-      "c:\\ffprobe": async () => ({
-        exitCode: 0,
-        stdout: "{ not json",
-        stderr: "",
-        ...OK,
-      }),
+    const bad: ExecutionRunner = async () => ({
+      exitCode: 0,
+      stdout: "{ not json",
+      stderr: "",
+      ...OK,
     });
-    const result = await tool().execute(
-      { input: "tiny.wav" },
-      ctx(runner),
-    );
+    const result = await tool().execute({ input: "tiny.wav" }, ctx(bad));
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("ParseFailure");
   });
@@ -196,7 +191,10 @@ function writeToolBehavior(name: string, validArgs: Record<string, unknown>) {
     const tool = () => ffmpegPlugin.tools.find((t) => t.name === name)!;
 
     it("denies without permission approval (workspace-write)", async () => {
-      const result = await tool().execute(validArgs, ctx(mockRunner(), false));
+      const result = await tool().execute(
+        { ...validArgs, output: "deny-out.wav" },
+        ctx(mockRunner(), false),
+      );
       expect(result.ok).toBe(false);
       expect(result.error?.code).toBe("PermissionDenied");
     });

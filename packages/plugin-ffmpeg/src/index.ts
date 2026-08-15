@@ -18,13 +18,705 @@
  *
  * (RED — the tools below are not implemented yet; tests are failing.)
  */
-import { type ToolDefinition } from "@dsh-forge/core";
+import {
+  validateArgs,
+  assertPermission,
+  resolveInWorkspace,
+  WorkspaceViolationError,
+  parseJsonOutput,
+  type ToolDefinition,
+  type ToolResult,
+  type ToolContext,
+  type ExecutionResult,
+} from "@dsh-forge/core";
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  writeFileSync,
+} from "node:fs";
+import { join, basename } from "node:path";
+import { tmpdir } from "node:os";
 import {
   resolveFfmpegBinary,
   resolveFfprobeBinary,
   FFMPEG_BINARY_HINT,
   FFPROBE_BINARY_HINT,
 } from "./binary.js";
+
+function invalid(message: string): ToolResult {
+  return {
+    ok: false,
+    summary: "invalid arguments",
+    error: { code: "InvalidArguments", message },
+  };
+}
+
+function permissionDenied(): ToolResult {
+  return {
+    ok: false,
+    summary: "permission denied",
+    error: {
+      code: "PermissionDenied",
+      message: "ffmpeg media writes require explicit approval (workspace-write)",
+    },
+  };
+}
+
+/** Redact embedded credentials from text before it reaches the model. */
+function redactCredentials(text: string): string {
+  return text
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s/]+@/gi, "$1***@")
+    .replace(/([A-Za-z0-9_.-]+):([^@\s/]+)@/g, "$1:***@");
+}
+
+function toolFailure(message: string): ToolResult {
+  return {
+    ok: false,
+    summary: "ffmpeg failed",
+    error: { code: "ToolFailure", message: redactCredentials(message) },
+  };
+}
+
+/** First non-empty stderr line (credential-redacted) or a stable fallback. */
+function firstErrorLine(tool: string, exitCode: number, stderr: string): string {
+  const line = stderr.trim().split("\n").find((l) => l.trim() !== "");
+  return redactCredentials(line ?? `${tool} exited with code ${exitCode}`);
+}
+
+/** Reject empty or leading-dash paths (flag injection). */
+function isValidPathInput(value: unknown): value is string {
+  return (
+    typeof value === "string" && value.trim() !== "" && !/^\s*-/.test(value)
+  );
+}
+
+/** Reject empty/leading-dash/whitespace codec names (flag injection). */
+function isValidCodec(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim() !== "" &&
+    !/^\s*-/.test(value) &&
+    !/\s/.test(value)
+  );
+}
+
+/** Reject empty/leading-dash/whitespace ffmpeg timestamps. */
+function isValidTime(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim() !== "" &&
+    !/^\s*-/.test(value) &&
+    !/\s/.test(value)
+  );
+}
+
+type Exec = ExecutionResult & { exitCode: number };
+
+/**
+ * Run an ffmpeg/ffprobe CLI command through the core runner. Only
+ * BinaryNotFound, Timeout, truncated output, runner errors and signal-death
+ * (null exit code) fail here; a non-zero exit code is passed through so
+ * callers can interpret it.
+ */
+async function runBinary(
+  ctx: ToolContext,
+  binary: string,
+  hint: string,
+  args: readonly string[],
+  opts: { timeoutMs?: number } = {},
+): Promise<{ ok: true; exec: Exec } | { ok: false; result: ToolResult }> {
+  const name = basename(binary).replace(/\.exe$/i, "");
+  const timeoutMs = opts.timeoutMs ?? 300_000;
+  let exec: ExecutionResult;
+  try {
+    exec = await ctx.run({
+      binary,
+      args: [...args],
+      cwd: ctx.workspaceRoot,
+      timeoutMs,
+      maxOutputBytes: 20 * 1024 * 1024,
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      result: toolFailure(`${name} runner threw: ${String(err)}`),
+    };
+  }
+  if (exec.error?.code === "BinaryNotFound") {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        summary: `${name} binary not found (${binary})`,
+        error: { code: "BinaryNotFound", message: hint },
+      },
+    };
+  }
+  if (exec.timedOut || exec.aborted) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        summary: `${name} timed out`,
+        error: { code: "Timeout", message: `${name} exceeded the ${timeoutMs}ms timeout` },
+      },
+    };
+  }
+  if (exec.truncated) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        summary: `${name} output exceeded the cap`,
+        error: {
+          code: "ToolFailure",
+          message: `${name} output exceeded the 20 MiB output cap; the result was truncated`,
+        },
+      },
+    };
+  }
+  if (exec.error) {
+    return { ok: false, result: toolFailure(exec.error.message) };
+  }
+  if (exec.exitCode === null) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        summary: `${name} terminated abnormally`,
+        error: {
+          code: "ToolFailure",
+          message: `${name} was killed or crashed (no exit code); the result is unreliable`,
+        },
+      },
+    };
+  }
+  return { ok: true, exec: { ...exec, exitCode: exec.exitCode } };
+}
+
+/** Resolve a workspace-relative input path; never throws. */
+function resolveInput(
+  ctx: ToolContext,
+  path: string,
+): { ok: true; absolute: string } | { ok: false; result: ToolResult } {
+  if (!isValidPathInput(path)) {
+    return {
+      ok: false,
+      result: invalid("input must be a non-empty workspace path"),
+    };
+  }
+  try {
+    return { ok: true, absolute: resolveInWorkspace(ctx.workspaceRoot, path) };
+  } catch (err) {
+    if (err instanceof WorkspaceViolationError) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          summary: "path escapes the workspace boundary",
+          error: { code: "WorkspaceViolation", message: `rejected: ${path}` },
+        },
+      };
+    }
+    return {
+      ok: false,
+      result: toolFailure(`input path could not be resolved: ${String(err)}`),
+    };
+  }
+}
+
+/**
+ * Resolve a workspace-relative output path and enforce the overwrite guard:
+ * an existing output is refused unless overwrite=true. The caller also passes
+ * -n (never overwrite) / -y to ffmpeg so a TOCTOU race cannot silently
+ * overwrite either.
+ */
+function resolveOutput(
+  ctx: ToolContext,
+  output: string,
+  overwrite: boolean,
+): { ok: true; absolute: string } | { ok: false; result: ToolResult } {
+  if (!isValidPathInput(output)) {
+    return {
+      ok: false,
+      result: invalid("output must be a non-empty workspace path"),
+    };
+  }
+  let absolute: string;
+  try {
+    absolute = resolveInWorkspace(ctx.workspaceRoot, output);
+  } catch (err) {
+    if (err instanceof WorkspaceViolationError) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          summary: "path escapes the workspace boundary",
+          error: { code: "WorkspaceViolation", message: `rejected: ${output}` },
+        },
+      };
+    }
+    return {
+      ok: false,
+      result: toolFailure(`output path could not be resolved: ${String(err)}`),
+    };
+  }
+  if (!overwrite && existsSync(absolute)) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        summary: "output exists",
+        error: {
+          code: "ToolFailure",
+          message: `output already exists: ${output}; set overwrite=true to replace it`,
+        },
+      },
+    };
+  }
+  return { ok: true, absolute };
+}
+
+function okResult(summary: string, raw: string): ToolResult {
+  return {
+    ok: true,
+    summary,
+    raw: raw.length > 20_000 ? raw.slice(0, 20_000) + "\n...[truncated]" : raw,
+  };
+}
+
+/** -n (never overwrite) or -y (overwrite) global ffmpeg flag. */
+function overwriteFlag(overwrite: boolean): string {
+  return overwrite ? "-y" : "-n";
+}
+
+const mediaProbe: ToolDefinition = {
+  name: "media_probe",
+  description:
+    "Probe a media file with ffprobe and report format + stream metadata (read-only).",
+  mutationClass: "read",
+  inputSchema: {
+    type: "object",
+    properties: {
+      input: {
+        type: "string",
+        description: "workspace-relative path to a media file",
+      },
+    },
+    required: ["input"],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    const { input } = validated.value as { input: string };
+    const resolved = resolveInput(ctx, input);
+    if (!resolved.ok) return resolved.result;
+    const run = await runBinary(
+      ctx,
+      resolveFfprobeBinary(),
+      FFPROBE_BINARY_HINT,
+      ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", resolved.absolute],
+      { timeoutMs: 60_000 },
+    );
+    if (!run.ok) return run.result;
+    if (run.exec.exitCode !== 0) {
+      return toolFailure(firstErrorLine("ffprobe", run.exec.exitCode, run.exec.stderr));
+    }
+    const parsed = parseJsonOutput("ffprobe", run.exec.stdout);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        summary: "ffprobe parse failed",
+        error: { code: "ParseFailure", message: parsed.error },
+      };
+    }
+    const data = parsed.value as Record<string, unknown>;
+    if (typeof data !== "object" || data === null) {
+      return {
+        ok: false,
+        summary: "ffprobe parse failed",
+        error: {
+          code: "ParseFailure",
+          message: "ffprobe: expected a JSON object",
+        },
+      };
+    }
+    const format = (data.format as Record<string, unknown> | undefined) ?? {};
+    const streams = Array.isArray(data.streams) ? data.streams : [];
+    const kinds = streams
+      .map((s) => (s as Record<string, unknown>).codec_type)
+      .filter((t) => typeof t === "string")
+      .join(",");
+    const fmt = typeof format.format_name === "string" ? format.format_name : "?";
+    const dur = typeof format.duration === "string" ? `${format.duration}s` : "?";
+    const summary = `media probe: ${fmt}, duration ${dur}, ${streams.length} stream(s) [${kinds || "none"}]`;
+    return okResult(summary, JSON.stringify(data, null, 2));
+  },
+};
+
+interface WriteArgs {
+  input?: string;
+  inputs?: string[];
+  output: string;
+  overwrite?: boolean;
+  start?: string;
+  duration?: string;
+  time?: string;
+  codec?: string;
+  audioCodec?: string;
+  crf?: number;
+}
+
+/**
+ * Shared executor for ffmpeg write tools: resolves input(s) + output inside
+ * the workspace, enforces the overwrite guard, runs ffmpeg, returns a
+ * canonical result.
+ */
+async function runWrite(
+  ctx: ToolContext,
+  args: WriteArgs,
+  buildArgv: (
+    inputArgs: { input?: string; inputs?: string[]; outputAbs: string; overwrite: boolean },
+  ) => string[],
+  action: string,
+  extra?: (args: WriteArgs) => { ok: true } | { ok: false; result: ToolResult },
+): Promise<ToolResult> {
+  if (!assertPermission("workspace-write", ctx.permission ?? { approved: false })) {
+    return permissionDenied();
+  }
+  const overwrite = args.overwrite === true;
+  const output = resolveOutput(ctx, args.output, overwrite);
+  if (!output.ok) return output.result;
+  let input: string | undefined;
+  if (args.input !== undefined) {
+    const r = resolveInput(ctx, args.input);
+    if (!r.ok) return r.result;
+    input = r.absolute;
+  }
+  let inputs: string[] | undefined;
+  if (args.inputs !== undefined) {
+    if (!Array.isArray(args.inputs) || args.inputs.length === 0) {
+      return invalid("inputs must be a non-empty array of workspace paths");
+    }
+    const resolved: string[] = [];
+    for (const p of args.inputs) {
+      if (typeof p !== "string") return invalid("each input must be a string path");
+      const r = resolveInput(ctx, p);
+      if (!r.ok) return r.result;
+      resolved.push(r.absolute);
+    }
+    inputs = resolved;
+  }
+  if (extra) {
+    const v = extra(args);
+    if (!v.ok) return v.result;
+  }
+  const argv = buildArgv({ input, inputs, outputAbs: output.absolute, overwrite });
+  const run = await runBinary(ctx, resolveFfmpegBinary(), FFMPEG_BINARY_HINT, argv);
+  if (!run.ok) return run.result;
+  if (run.exec.exitCode !== 0) {
+    return toolFailure(firstErrorLine("ffmpeg", run.exec.exitCode, run.exec.stderr));
+  }
+  return okResult(`${action} -> ${args.output}`, run.exec.stdout + run.exec.stderr);
+}
+
+const videoClip: ToolDefinition = {
+  name: "video_clip",
+  description:
+    "Extract a clip from a media file (workspace-write: writes a new file; no overwrite unless overwrite=true).",
+  mutationClass: "workspace-write",
+  inputSchema: {
+    type: "object",
+    properties: {
+      input: { type: "string", description: "workspace-relative input media" },
+      start: { type: "string", description: "start timestamp, e.g. 0, 00:00:01, 1.5" },
+      duration: { type: "string", description: "clip duration, e.g. 0.1, 10, 00:00:05" },
+      output: { type: "string", description: "workspace-relative output file" },
+      overwrite: { type: "boolean", description: "replace the output if it exists" },
+    },
+    required: ["input", "start", "duration", "output"],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    const a = validated.value as unknown as WriteArgs;
+    if (!isValidTime(a.start) || !isValidTime(a.duration)) {
+      return invalid("start and duration must be non-empty timestamps");
+    }
+    return runWrite(ctx, a, ({ input, outputAbs, overwrite }) => [
+      overwriteFlag(overwrite),
+      "-i",
+      input!,
+      "-ss",
+      (a.start as string).trim(),
+      "-t",
+      (a.duration as string).trim(),
+      "-c",
+      "copy",
+      outputAbs,
+    ], "clipped");
+  },
+};
+
+const videoTranscode: ToolDefinition = {
+  name: "video_transcode",
+  description:
+    "Transcode a media file to another codec (workspace-write; no overwrite unless overwrite=true).",
+  mutationClass: "workspace-write",
+  inputSchema: {
+    type: "object",
+    properties: {
+      input: { type: "string", description: "workspace-relative input media" },
+      codec: { type: "string", description: "video codec (default libx264)" },
+      audioCodec: { type: "string", description: "audio codec (default aac)" },
+      output: { type: "string", description: "workspace-relative output file" },
+      overwrite: { type: "boolean", description: "replace the output if it exists" },
+    },
+    required: ["input", "output"],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    const a = validated.value as unknown as WriteArgs;
+    if (a.codec !== undefined && !isValidCodec(a.codec)) {
+      return invalid("codec must be a non-empty codec name");
+    }
+    if (a.audioCodec !== undefined && !isValidCodec(a.audioCodec)) {
+      return invalid("audioCodec must be a non-empty codec name");
+    }
+    return runWrite(ctx, a, ({ input, outputAbs, overwrite }) => [
+      overwriteFlag(overwrite),
+      "-i",
+      input!,
+      "-c:v",
+      (a.codec ?? "libx264").trim(),
+      "-c:a",
+      (a.audioCodec ?? "aac").trim(),
+      outputAbs,
+    ], "transcoded");
+  },
+};
+
+const videoConcat: ToolDefinition = {
+  name: "video_concat",
+  description:
+    "Concatenate media files with the same codecs (workspace-write; no overwrite unless overwrite=true).",
+  mutationClass: "workspace-write",
+  inputSchema: {
+    type: "object",
+    properties: {
+      inputs: {
+        type: "array",
+        items: { type: "string" },
+        description: "workspace-relative media files to concatenate (same codecs)",
+      },
+      output: { type: "string", description: "workspace-relative output file" },
+      overwrite: { type: "boolean", description: "replace the output if it exists" },
+    },
+    required: ["inputs", "output"],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    const a = validated.value as unknown as WriteArgs;
+    if (!assertPermission("workspace-write", ctx.permission ?? { approved: false })) {
+      return permissionDenied();
+    }
+    const overwrite = a.overwrite === true;
+    const output = resolveOutput(ctx, a.output, overwrite);
+    if (!output.ok) return output.result;
+    if (!Array.isArray(a.inputs) || a.inputs.length === 0) {
+      return invalid("inputs must be a non-empty array of workspace paths");
+    }
+    const resolved: string[] = [];
+    for (const p of a.inputs) {
+      if (typeof p !== "string") return invalid("each input must be a string path");
+      const r = resolveInput(ctx, p);
+      if (!r.ok) return r.result;
+      resolved.push(r.absolute);
+    }
+    // ffmpeg's concat demuxer needs a list file; write it into a private
+    // neutral runtime dir (never the workspace) so nothing repo-controlled is
+    // read as the list, then remove it.
+    const runtime = mkdtempSync(join(tmpdir(), "dsh-ffmpeg-concat-"));
+    try {
+      const list = resolved
+        .map((p) => `file '${p.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`)
+        .join("\n");
+      const listPath = join(runtime, "list.txt");
+      writeFileSync(listPath, list + "\n", "utf8");
+      const run = await runBinary(
+        ctx,
+        resolveFfmpegBinary(),
+        FFMPEG_BINARY_HINT,
+        [
+          overwriteFlag(overwrite),
+          "-f",
+          "concat",
+          "-safe",
+          "0",
+          "-i",
+          listPath,
+          "-c",
+          "copy",
+          output.absolute,
+        ],
+      );
+      if (!run.ok) return run.result;
+      if (run.exec.exitCode !== 0) {
+        return toolFailure(firstErrorLine("ffmpeg", run.exec.exitCode, run.exec.stderr));
+      }
+      return okResult(
+        `concatenated -> ${a.output}`,
+        run.exec.stdout + run.exec.stderr,
+      );
+    } finally {
+      // best-effort cleanup (a throw must never become an unhandled rejection)
+      try {
+        rmSync(runtime, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
+  },
+};
+
+const audioExtract: ToolDefinition = {
+  name: "audio_extract",
+  description:
+    "Extract the audio track from a media file (workspace-write; no overwrite unless overwrite=true).",
+  mutationClass: "workspace-write",
+  inputSchema: {
+    type: "object",
+    properties: {
+      input: { type: "string", description: "workspace-relative input media" },
+      codec: { type: "string", description: "audio codec (default aac)" },
+      output: { type: "string", description: "workspace-relative output file" },
+      overwrite: { type: "boolean", description: "replace the output if it exists" },
+    },
+    required: ["input", "output"],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    const a = validated.value as unknown as WriteArgs;
+    if (a.codec !== undefined && !isValidCodec(a.codec)) {
+      return invalid("codec must be a non-empty codec name");
+    }
+    return runWrite(ctx, a, ({ input, outputAbs, overwrite }) => [
+      overwriteFlag(overwrite),
+      "-i",
+      input!,
+      "-vn",
+      "-c:a",
+      (a.codec ?? "aac").trim(),
+      outputAbs,
+    ], "extracted audio");
+  },
+};
+
+const audioConvert: ToolDefinition = {
+  name: "audio_convert",
+  description:
+    "Convert an audio file to another codec (workspace-write; no overwrite unless overwrite=true).",
+  mutationClass: "workspace-write",
+  inputSchema: {
+    type: "object",
+    properties: {
+      input: { type: "string", description: "workspace-relative input audio" },
+      codec: { type: "string", description: "audio codec (default mp3)" },
+      output: { type: "string", description: "workspace-relative output file" },
+      overwrite: { type: "boolean", description: "replace the output if it exists" },
+    },
+    required: ["input", "output"],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    const a = validated.value as unknown as WriteArgs;
+    if (a.codec !== undefined && !isValidCodec(a.codec)) {
+      return invalid("codec must be a non-empty codec name");
+    }
+    return runWrite(ctx, a, ({ input, outputAbs, overwrite }) => [
+      overwriteFlag(overwrite),
+      "-i",
+      input!,
+      "-c:a",
+      (a.codec ?? "mp3").trim(),
+      outputAbs,
+    ], "converted audio");
+  },
+};
+
+const thumbnailGenerate: ToolDefinition = {
+  name: "thumbnail_generate",
+  description:
+    "Generate a thumbnail frame from a media file (workspace-write; no overwrite unless overwrite=true).",
+  mutationClass: "workspace-write",
+  inputSchema: {
+    type: "object",
+    properties: {
+      input: { type: "string", description: "workspace-relative input media" },
+      time: { type: "string", description: "timestamp for the frame (default 00:00:01)" },
+      output: { type: "string", description: "workspace-relative output image" },
+      overwrite: { type: "boolean", description: "replace the output if it exists" },
+    },
+    required: ["input", "output"],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    const a = validated.value as unknown as WriteArgs;
+    if (a.time !== undefined && !isValidTime(a.time)) {
+      return invalid("time must be a non-empty timestamp");
+    }
+    return runWrite(ctx, a, ({ input, outputAbs, overwrite }) => [
+      overwriteFlag(overwrite),
+      "-i",
+      input!,
+      "-ss",
+      (a.time ?? "00:00:01").trim(),
+      "-vframes",
+      "1",
+      outputAbs,
+    ], "generated thumbnail");
+  },
+};
+
+const mediaCompress: ToolDefinition = {
+  name: "media_compress",
+  description:
+    "Compress a media file with a CRF (0-51; lower = higher quality) (workspace-write; no overwrite unless overwrite=true).",
+  mutationClass: "workspace-write",
+  inputSchema: {
+    type: "object",
+    properties: {
+      input: { type: "string", description: "workspace-relative input media" },
+      crf: { type: "number", description: "CRF quality factor, 0-51 (default 28)" },
+      output: { type: "string", description: "workspace-relative output file" },
+      overwrite: { type: "boolean", description: "replace the output if it exists" },
+    },
+    required: ["input", "output"],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    const a = validated.value as unknown as WriteArgs;
+    const crf = a.crf ?? 28;
+    if (!Number.isInteger(crf) || crf < 0 || crf > 51) {
+      return invalid("crf must be an integer between 0 and 51");
+    }
+    return runWrite(ctx, a, ({ input, outputAbs, overwrite }) => [
+      overwriteFlag(overwrite),
+      "-i",
+      input!,
+      "-crf",
+      String(crf),
+      outputAbs,
+    ], "compressed");
+  },
+};
 
 export const ffmpegPlugin: {
   metadata: {
@@ -53,7 +745,16 @@ export const ffmpegPlugin: {
       "workspace-write",
     ],
   },
-  tools: [],
+  tools: [
+    mediaProbe,
+    videoClip,
+    videoTranscode,
+    videoConcat,
+    audioExtract,
+    audioConvert,
+    thumbnailGenerate,
+    mediaCompress,
+  ],
 };
 
 export { resolveFfmpegBinary, resolveFfprobeBinary };
