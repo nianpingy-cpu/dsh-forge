@@ -1,0 +1,8 @@
+name: CI
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail intentionally
+        run: echo "boom" && exit 1
