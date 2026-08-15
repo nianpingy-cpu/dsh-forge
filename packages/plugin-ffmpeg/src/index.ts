@@ -568,18 +568,22 @@ const videoConcat: ToolDefinition = {
     const resolved: string[] = [];
     for (const p of a.inputs) {
       if (typeof p !== "string") return invalid("each input must be a string path");
+      // ffmpeg's concat demuxer (av_get_token) cannot represent a single
+      // quote inside a quoted token — it truncates at the quote, silently
+      // concatenating a different file. Reject such paths outright.
+      if (p.includes("'")) {
+        return invalid("input path cannot contain a single quote");
+      }
       const r = resolveInput(ctx, p);
       if (!r.ok) return r.result;
       resolved.push(r.absolute);
     }
-    // ffmpeg's concat demuxer needs a list file; write it into a private
-    // neutral runtime dir (never the workspace) so nothing repo-controlled is
-    // read as the list, then remove it.
+    // ffmpeg concat list format: av_get_token honors backslash escapes and
+    // normalizes nothing else; paths are normalized to forward slashes and
+    // are single-quote-free (validated above).
     const runtime = mkdtempSync(join(tmpdir(), "dsh-ffmpeg-concat-"));
     try {
-      const list = resolved
-        .map((p) => `file '${p.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`)
-        .join("\n");
+      const list = resolved.map((p) => `file '${p.replace(/\\/g, "/")}'`).join("\n");
       const listPath = join(runtime, "list.txt");
       writeFileSync(listPath, list + "\n", "utf8");
       const run = await runBinary(

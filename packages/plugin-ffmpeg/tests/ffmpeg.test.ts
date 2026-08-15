@@ -329,6 +329,17 @@ describe("tool-specific validation", () => {
     expect(probed.error?.code).toBe("InvalidArguments");
   });
 
+  it("rejects single quotes in concat inputs (av_get_token cannot represent them)", async () => {
+    const concat = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "video_concat")!;
+    const result = await concat().execute(
+      { inputs: ["a'b.wav"], output: "o.wav" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
   it("redacts embedded credentials from successful write output", async () => {
     const tool = () =>
       ffmpegPlugin.tools.find((t) => t.name === "video_transcode")!;
