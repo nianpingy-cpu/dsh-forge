@@ -1,0 +1,22 @@
+{
+  "ArtifactName": "config",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "Dockerfile",
+      "Class": "config",
+      "Type": "dockerfile",
+      "Misconfigurations": [
+        {
+          "AVDID": "AVD-DS-0001",
+          "ID": "DS002",
+          "Title": "Container is running as root",
+          "Severity": "HIGH",
+          "Message": "container running as root",
+          "StartLine": 4,
+          "EndLine": 4
+        }
+      ]
+    }
+  ]
+}

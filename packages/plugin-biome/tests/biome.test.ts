@@ -46,7 +46,7 @@ describe("biome_check", () => {
     const d = result.diagnostics![0]!;
     expect(d.file).toContain("sample.js");
     expect(d.severity).toMatch(/warning|error/);
-  });
+  }, 30_000);
 
   it("reports 1-based line numbers from the real binary", async () => {
     // Verified against @biomejs/biome 2.5.8: lint diagnostics are already

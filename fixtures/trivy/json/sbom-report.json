@@ -1,0 +1,22 @@
+{
+  "ArtifactName": "sbom",
+  "ArtifactType": "cyclonedx",
+  "Results": [
+    {
+      "Target": "sbom",
+      "Class": "license",
+      "Licenses": [
+        {
+          "Name": "MIT",
+          "Severity": "UNKNOWN",
+          "PkgName": "lodash"
+        },
+        {
+          "Name": "GPL-3.0",
+          "Severity": "UNKNOWN",
+          "PkgName": "some-lib"
+        }
+      ]
+    }
+  ]
+}

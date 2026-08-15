@@ -29,6 +29,7 @@
     "@dsh-forge/plugin-uv": "workspace:*",
     "@dsh-forge/plugin-act": "workspace:*",
     "@dsh-forge/plugin-semgrep": "workspace:*",
+    "@dsh-forge/plugin-trivy": "workspace:*",
     "@eslint/js": "^9.30.0",
     "@types/estree": "^1.0.7",
     "@types/node": "^24.13.3",

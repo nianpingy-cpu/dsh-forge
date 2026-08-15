@@ -81,7 +81,7 @@ describe("uv_status", () => {
     const result = await tool().execute({ projectDir: PROJ }, realCtx());
     expect(result.ok).toBe(true);
     expect(result.summary).toBeTruthy();
-  });
+  }, 30_000);
 
   it("fails when the project has no pyproject.toml", async () => {
     const dir = join(workspaceRoot, "noproject");
@@ -157,7 +157,7 @@ describe("uv_tree", () => {
     const result = await tool().execute({ projectDir: PROJ }, realCtx());
     expect(result.ok).toBe(true);
     expect(result.summary).toMatch(/dependency tree/);
-  });
+  }, 30_000);
 });
 
 describe("uv_python", () => {

@@ -44,6 +44,13 @@ jobs:
       - name: Install semgrep (integration fixtures)
         run: python -m pip install --quiet --break-system-packages semgrep
 
+      - name: Install trivy (integration fixtures, Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -sSL https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz -o trivy.tar.gz
+          tar -xzf trivy.tar.gz -C /usr/local/bin trivy
+          trivy --version
+
       - name: Install act (integration fixtures, Linux)
         if: runner.os == 'Linux'
         run: |
