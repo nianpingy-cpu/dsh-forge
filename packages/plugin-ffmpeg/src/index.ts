@@ -34,6 +34,9 @@ import {
   rmSync,
   existsSync,
   writeFileSync,
+  openSync,
+  readSync,
+  closeSync,
 } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
@@ -221,6 +224,36 @@ function isPlaylistPath(p: string): boolean {
   return /\.(m3u8?|m3u)$/i.test(p);
 }
 
+/** HLS/m3u playlists start with #EXTM3U / #EXTINF (content signature). */
+const PLAYLIST_SIGNATURE = /^\s*#EXTM3U|^\s*#EXTINF/i;
+
+/**
+ * True when the file's leading bytes look like a playlist. ffmpeg auto-
+ * detects the HLS demuxer by content, not extension, so a renamed playlist
+ * (e.g. photo.mp4 containing #EXTM3U) would still dereference external files;
+ * this bounded 2 KiB head read catches it without loading a large media file.
+ */
+function hasPlaylistSignature(absolute: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(absolute, "r");
+    const buf = Buffer.alloc(2048);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    return PLAYLIST_SIGNATURE.test(buf.subarray(0, n).toString("utf8"));
+  } catch {
+    // unreadable/missing input — let ffmpeg report it
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
 /** Resolve a workspace-relative input path; never throws. */
 function resolveInput(
   ctx: ToolContext,
@@ -237,13 +270,14 @@ function resolveInput(
     // Playlist containers (HLS/m3u) dereference external file/URL references
     // inside the playlist. With -protocol_whitelist file,pipe,fd a workspace
     // .m3u8 makes the demuxer read arbitrary local media (boundary bypass for
-    // the read tool, confused-deputy copy-into-workspace for the write tools),
-    // so they are rejected outright.
-    if (isPlaylistPath(absolute)) {
+    // the read tool, confused-deputy copy-into-workspace for the write tools).
+    // Reject by extension AND by content signature (ffmpeg auto-detects HLS
+    // by content, so a renamed playlist is caught too).
+    if (isPlaylistPath(absolute) || hasPlaylistSignature(absolute)) {
       return {
         ok: false,
         result: invalid(
-          "playlist containers (.m3u8/.m3u) are not supported: they dereference external files",
+          "playlist containers (.m3u8/.m3u or #EXTM3U/#EXTINF) are not supported: they dereference external files",
         ),
       };
     }

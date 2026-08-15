@@ -367,6 +367,35 @@ describe("tool-specific validation", () => {
     expect(result.error?.message).toMatch(/playlist/i);
   });
 
+  it("rejects a renamed playlist by content signature (ffmpeg auto-detects HLS by content)", async () => {
+    // photo.mp4 has a media extension but HLS content — ffmpeg would demux it
+    // as HLS and dereference external files; the content guard must reject it.
+    writeFileSync(
+      join(workspaceRoot, "photo.mp4"),
+      "#EXTM3U\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=1280000\nfile:///tmp/secret.mp4",
+      "utf8",
+    );
+    const probe = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "media_probe")!;
+    const probed = await probe().execute(
+      { input: "photo.mp4" },
+      ctx(mockRunner()),
+    );
+    expect(probed.ok).toBe(false);
+    expect(probed.error?.code).toBe("InvalidArguments");
+    expect(probed.error?.message).toMatch(/playlist/i);
+
+    const transcode = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "video_transcode")!;
+    const written = await transcode().execute(
+      { input: "photo.mp4", output: "o.wav" },
+      ctx(mockRunner()),
+    );
+    expect(written.ok).toBe(false);
+    expect(written.error?.code).toBe("InvalidArguments");
+    expect(written.error?.message).toMatch(/playlist/i);
+  });
+
   it("does not rewrite backslashes into traversal in the concat list (POSIX)", async () => {
     if (process.platform === "win32") return; // Windows resolves \\ differently
     let listContent = "";
