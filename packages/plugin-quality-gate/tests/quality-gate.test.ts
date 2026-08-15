@@ -234,20 +234,47 @@ describe("quality_gate (ISSUE-018)", () => {
     }
   });
 
-  it("never certifies a clean PASS when a lane is denied by the host", async () => {
-    // Without network approval the Semgrep (network) lane is denied; the gate
-    // must not report a clean PASS even though the read lanes are clean.
+  it("requires network approval (PermissionDenied without it)", async () => {
+    // The gate is classified network (Semgrep audit lane): without network
+    // approval the gate is denied upfront — it never runs lanes unapproved.
     const ws = makeWorkspace({ "src/app.py": "x = 1\n" });
     try {
       const r = await gate().execute(
         { path: "src" },
         ctxApproval(ws, mockRunner(), false),
       );
+      expect(r.ok).toBe(false);
+      expect(r.error?.code).toBe("PermissionDenied");
+    } finally {
+      cleanup(ws);
+    }
+  });
+
+  it("quality_gate_status reports the detected language and available lanes", async () => {
+    const ws = makeWorkspace({ "src/app.py": "x = 1\n" });
+    try {
+      const status = qualityGatePlugin.tools.find(
+        (t) => t.name === "quality_gate_status",
+      )!;
+      const r = await status.execute({ path: "src" }, ctx(ws, mockRunner()));
       expect(r.ok).toBe(true);
-      expect(r.summary).toMatch(/PASS_WITH_WARNINGS/);
-      expect(r.summary).not.toMatch(/quality gate: PASS\b/);
-      expect(r.raw).toMatch(/denied/i);
-      expect(r.raw).toContain("semgrep_security_scan");
+      expect(r.raw).toContain("python");
+      expect(r.raw).toContain("ruff_check");
+    } finally {
+      cleanup(ws);
+    }
+  });
+
+  it("quality_gate_status returns BinaryNotFound when all lanes are missing", async () => {
+    const ws = makeWorkspace({ "src/app.py": "x = 1\n" });
+    try {
+      const status = qualityGatePlugin.tools.find(
+        (t) => t.name === "quality_gate_status",
+      )!;
+      const runner = mockRunner({ ruff: bnf, semgrep: bnf, trivy: bnf });
+      const r = await status.execute({ path: "src" }, ctx(ws, runner));
+      expect(r.ok).toBe(false);
+      expect(r.error?.code).toBe("BinaryNotFound");
     } finally {
       cleanup(ws);
     }
@@ -280,16 +307,19 @@ describe("quality_gate (ISSUE-018)", () => {
       const report = await runContractSuite(qualityGatePlugin, {
         workspaceRoot: ws,
         runner: mockRunner(),
-        // The binary probe runs without a permission context, so it must be
-        // the (ungated) read/network-composed gate itself: with no tools
-        // present and no approval, every lane is skipped and the gate maps
-        // that to BinaryNotFound (proving it invokes ctx.run via the lanes).
-        missingBinaryTool: "quality_gate",
+        // The kit's binary probe runs without a permission context, so it must
+        // be the ungated read-only status tool (which reaches ctx.run and
+        // maps all-missing to BinaryNotFound).
+        missingBinaryTool: "quality_gate_status",
         missingBinaryToolArgs: { path: "src" },
         toolArgs: {
           quality_gate: {
             valid: { path: "src" },
             invalid: { failOn: "not-a-severity" },
+          },
+          quality_gate_status: {
+            valid: { path: "src" },
+            invalid: { path: 42 },
           },
         },
       });

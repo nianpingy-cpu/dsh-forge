@@ -6,13 +6,18 @@
  * aggregates their normalized diagnostics, and returns a
  * PASS / PASS_WITH_WARNINGS / FAIL verdict with configurable thresholds.
  *
- * Lane policy:
+ * Permission model (ADR-005, honest): the gate is classified `network` (it
+ * runs the Semgrep audit lane), so invoking it requires network approval;
+ * once approved, every lane runs. Lanes:
  * - A lane whose binary is not installed (BinaryNotFound) is recorded as
  *   "skipped" and does not fail the gate (other lanes still gate).
  * - A lane that errors for any other reason fails the gate (FAIL) — the gate
  *   cannot certify quality when a lane did not run.
- * - If no lane actually ran, the gate returns a ToolFailure instead of
+ * - If no lane actually ran, the gate returns BinaryNotFound instead of
  *   fabricating a verdict.
+ *
+ * `quality_gate_status` (read) reports which lanes are available and the
+ * detected project language; it is the ungated companion probe.
  */
 import {
   validateArgs,
@@ -21,17 +26,18 @@ import {
   WorkspaceViolationError,
   summarizeDiagnostics,
   type Diagnostic,
-  type MutationClass,
+  type ExecutionRequest,
   type Severity,
+  type ToolContext,
   type ToolDefinition,
   type ToolResult,
 } from "@dsh-forge/core";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { ruffPlugin } from "@dsh-forge/plugin-ruff";
-import { biomePlugin } from "@dsh-forge/plugin-biome";
-import { semgrepPlugin } from "@dsh-forge/plugin-semgrep";
-import { trivyPlugin } from "@dsh-forge/plugin-trivy";
+import { ruffPlugin, resolveRuffBinary } from "@dsh-forge/plugin-ruff";
+import { biomePlugin, resolveBiomeBinary } from "@dsh-forge/plugin-biome";
+import { semgrepPlugin, resolveSemgrepBinary } from "@dsh-forge/plugin-semgrep";
+import { trivyPlugin, resolveTrivyBinary } from "@dsh-forge/plugin-trivy";
 
 function invalid(message: string): ToolResult {
   return {
@@ -54,14 +60,6 @@ function binaryNotFound(message: string): ToolResult {
     ok: false,
     summary: "no quality tools available",
     error: { code: "BinaryNotFound", message },
-  };
-}
-
-function permissionDenied(message: string): ToolResult {
-  return {
-    ok: false,
-    summary: "quality gate denied",
-    error: { code: "PermissionDenied", message },
   };
 }
 
@@ -138,8 +136,6 @@ interface Lane {
   name: string;
   tool: ToolDefinition;
   args: unknown;
-  /** Permission class the gate must enforce (ADR-005 per-class gating). */
-  requiredClass: MutationClass;
 }
 
 const ruffCheck = ruffPlugin.tools.find((t) => t.name === "ruff_check")!;
@@ -154,34 +150,14 @@ const trivySecretScan = trivyPlugin.tools.find(
 function buildLanes(lang: ProjectLang, gateRel: string): Lane[] {
   const lanes: Lane[] = [];
   if (lang === "python") {
-    lanes.push({
-      name: "ruff_check",
-      tool: ruffCheck,
-      args: { paths: [gateRel] },
-      requiredClass: "read",
-    });
+    lanes.push({ name: "ruff_check", tool: ruffCheck, args: { paths: [gateRel] } });
   }
   if (lang === "web") {
-    lanes.push({
-      name: "biome_check",
-      tool: biomeCheck,
-      args: { paths: [gateRel] },
-      requiredClass: "read",
-    });
+    lanes.push({ name: "biome_check", tool: biomeCheck, args: { paths: [gateRel] } });
   }
   // Security lanes run for every project type.
-  lanes.push({
-    name: "trivy_secret_scan",
-    tool: trivySecretScan,
-    args: { path: gateRel },
-    requiredClass: "read",
-  });
-  lanes.push({
-    name: "semgrep_security_scan",
-    tool: semgrepSecurityScan,
-    args: { path: gateRel },
-    requiredClass: "network",
-  });
+  lanes.push({ name: "trivy_secret_scan", tool: trivySecretScan, args: { path: gateRel } });
+  lanes.push({ name: "semgrep_security_scan", tool: semgrepSecurityScan, args: { path: gateRel } });
   return lanes;
 }
 
@@ -209,7 +185,6 @@ function computeVerdict(
   diagnostics: readonly Diagnostic[],
   failOn: FailOn,
   laneErrors: number,
-  deniedLanes: number,
 ): { verdict: Verdict; counts: Record<Severity, number> } {
   const counts = countBySeverity(diagnostics);
   const errors = counts.error + counts.critical;
@@ -225,15 +200,12 @@ function computeVerdict(
   } else {
     verdict = diagnostics.length > 0 ? "FAIL" : "PASS";
   }
-  // A denied lane means the gate could not certify that part of the story;
-  // it must never report a clean PASS (ADR-005 / false-certification guard).
-  if (verdict === "PASS" && deniedLanes > 0) verdict = "PASS_WITH_WARNINGS";
   return { verdict, counts };
 }
 
 interface LaneOutcome {
   name: string;
-  status: "ok" | "skipped" | "denied" | "error";
+  status: "ok" | "skipped" | "error";
   findings: number;
   message?: string;
 }
@@ -243,7 +215,7 @@ interface LaneOutcome {
 const qualityGate: ToolDefinition = {
   name: "quality_gate",
   description:
-    "Detect the project (Python/JS/TS), run the matching lint lane (Ruff/Biome) plus security lanes (Semgrep audit, Trivy secrets) by composing the existing plugin tools, aggregate normalized diagnostics, and return a PASS / PASS_WITH_WARNINGS / FAIL verdict with configurable thresholds. Each lane's permission class is enforced by the gate against the host permission context (ADR-005): read lanes always run; the network lane (Semgrep audit) runs only when approved. Denied lanes are reported and a denied gate can never report a clean PASS.",
+    "Detect the project (Python/JS/TS), run the matching lint lane (Ruff/Biome) plus security lanes (Semgrep audit, Trivy secrets) by composing the existing plugin tools, aggregate normalized diagnostics, and return a PASS / PASS_WITH_WARNINGS / FAIL verdict with configurable thresholds. Classified network: requires network approval (the Semgrep audit lane reaches the registry); once approved every lane runs. Lanes whose binary is not installed are skipped and reported; a lane that errors fails the gate.",
   mutationClass: "network",
   inputSchema: {
     type: "object",
@@ -276,6 +248,20 @@ const qualityGate: ToolDefinition = {
     if (!Number.isInteger(cap) || cap < 1 || cap > 5000) {
       return invalid("maxFindings must be an integer between 1 and 5000");
     }
+    // Honest ADR-005 gating: the gate is classified network (the Semgrep
+    // audit lane reaches the registry), so the host must approve network
+    // before any lane runs.
+    if (!assertPermission("network", ctx.permission ?? { approved: false })) {
+      return {
+        ok: false,
+        summary: "permission denied",
+        error: {
+          code: "PermissionDenied",
+          message:
+            "quality_gate runs a network security audit lane and requires network approval",
+        },
+      };
+    }
 
     let gateRel: string;
     let gateAbs: string;
@@ -306,28 +292,8 @@ const qualityGate: ToolDefinition = {
     const diagnostics: Diagnostic[] = [];
     const outcomes: LaneOutcome[] = [];
     let laneErrors = 0;
-    let deniedLanes = 0;
-    let missingLanes = 0;
     let ran = 0;
     for (const lane of lanes) {
-      // ADR-005 per-class gating is enforced here at the orchestrator
-      // boundary (not delegated to the composed tools), so the harness
-      // permission context gates every lane the gate runs.
-      if (
-        !assertPermission(
-          lane.requiredClass,
-          ctx.permission ?? { approved: false },
-        )
-      ) {
-        deniedLanes += 1;
-        outcomes.push({
-          name: lane.name,
-          status: "denied",
-          findings: 0,
-          message: `${lane.requiredClass} permission not approved`,
-        });
-        continue;
-      }
       // A throwing composed tool (or a throw from ctx.run the tool does not
       // normalize) must never crash the gate: map it to a lane 'error'
       // outcome so the gate still returns a normalized verdict (FAIL).
@@ -351,18 +317,9 @@ const qualityGate: ToolDefinition = {
         diagnostics.push(...ds);
         outcomes.push({ name: lane.name, status: "ok", findings: ds.length });
       } else if (result.error?.code === "BinaryNotFound") {
-        missingLanes += 1;
         outcomes.push({
           name: lane.name,
           status: "skipped",
-          findings: 0,
-          message: result.error.message,
-        });
-      } else if (result.error?.code === "PermissionDenied") {
-        deniedLanes += 1;
-        outcomes.push({
-          name: lane.name,
-          status: "denied",
           findings: 0,
           message: result.error.message,
         });
@@ -379,13 +336,6 @@ const qualityGate: ToolDefinition = {
     }
 
     if (ran === 0) {
-      // Distinguish a permission block from missing tools: BinaryNotFound is
-      // factually wrong when the blocker is approval.
-      if (deniedLanes > 0 && missingLanes === 0) {
-        return permissionDenied(
-          "all quality lanes were denied: approval for their permission classes is required",
-        );
-      }
       return binaryNotFound(
         "no quality tools available (Ruff/Biome, Semgrep, Trivy not installed or unusable)",
       );
@@ -400,7 +350,6 @@ const qualityGate: ToolDefinition = {
       diagnostics,
       threshold,
       laneErrors,
-      deniedLanes,
     );
 
     const laneSummary = outcomes
@@ -416,7 +365,6 @@ const qualityGate: ToolDefinition = {
       `quality gate: ${verdict} — ${counts.error + counts.critical} error(s), ` +
       `${counts.warning} warning(s) across ${outcomes.length} lane(s)` +
       (laneErrors > 0 ? ` (${laneErrors} lane(s) failed to run)` : "") +
-      (deniedLanes > 0 ? ` (${deniedLanes} lane(s) denied)` : "") +
       (laneSummary ? ` [${laneSummary}]` : "");
 
     const raw = JSON.stringify(
@@ -431,6 +379,97 @@ const qualityGate: ToolDefinition = {
       diagnostics: capped,
       summaryBlock:
         capped.length > 0 ? summarizeDiagnostics("quality-gate", capped) : undefined,
+      raw: redactCredentials(raw),
+    };
+  },
+};
+
+/** Probe whether a lane's binary is available by invoking it via ctx.run. */
+async function probeAvailable(
+  ctx: ToolContext,
+  request: Omit<ExecutionRequest, "cwd" | "timeoutMs" | "maxOutputBytes">,
+): Promise<boolean> {
+  try {
+    const r = await ctx.run({ ...request, timeoutMs: 10_000 });
+    return !(r.error?.code === "BinaryNotFound") && r.exitCode !== null;
+  } catch {
+    return false;
+  }
+}
+
+const qualityGateStatus: ToolDefinition = {
+  name: "quality_gate_status",
+  description:
+    "Report the detected project language and which quality/security lanes are available (Ruff/Biome, Semgrep, Trivy binary availability) — read-only; use before running quality_gate.",
+  mutationClass: "read",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description: "workspace-relative directory to inspect (default: workspace root)",
+      },
+    },
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    const { path } = validated.value as { path?: string };
+    let gateAbs: string;
+    if (path !== undefined) {
+      if (!isValidPathInput(path)) {
+        return invalid("path must be a non-empty workspace path");
+      }
+      try {
+        gateAbs = resolveInWorkspace(ctx.workspaceRoot, path);
+      } catch (err) {
+        if (err instanceof WorkspaceViolationError) {
+          return {
+            ok: false,
+            summary: "path escapes the workspace boundary",
+            error: { code: "WorkspaceViolation", message: `rejected: ${path}` },
+          };
+        }
+        return toolFailure(`path could not be resolved: ${String(err)}`);
+      }
+    } else {
+      gateAbs = resolveInWorkspace(ctx.workspaceRoot, ".");
+    }
+
+    const language = detectLanguage(gateAbs);
+    // Probe each lane binary through ctx.run (the core runner), never a bare
+    // PATH name, so a missing binary is a real detection, not a cwd search.
+    const probes: Array<{ name: string; request: Omit<ExecutionRequest, "cwd" | "timeoutMs" | "maxOutputBytes"> }> = [];
+    if (language === "python") {
+      probes.push({ name: "ruff_check", request: { binary: resolveRuffBinary(), args: ["--version"] } });
+    }
+    if (language === "web") {
+      const biome = resolveBiomeBinary();
+      probes.push({ name: "biome_check", request: { binary: biome.binary, args: [...biome.prefixArgs, "--version"] } });
+    }
+    probes.push({ name: "trivy_secret_scan", request: { binary: resolveTrivyBinary(), args: ["--version"] } });
+    probes.push({ name: "semgrep_security_scan", request: { binary: resolveSemgrepBinary(), args: ["--version"] } });
+
+    const lanes = await Promise.all(
+      probes.map(async (p) => ({
+        name: p.name,
+        available: await probeAvailable(ctx, p.request),
+      })),
+    );
+    const available = lanes.filter((l) => l.available).length;
+    if (available === 0) {
+      return binaryNotFound(
+        "no quality tools available (Ruff/Biome, Semgrep, Trivy not installed)",
+      );
+    }
+    const raw = JSON.stringify(
+      { language, lanes, total: lanes.length, available },
+      null,
+      2,
+    );
+    return {
+      ok: true,
+      summary: `quality gate status: ${language} project, ${available}/${lanes.length} lanes available`,
       raw: redactCredentials(raw),
     };
   },
@@ -459,5 +498,5 @@ export const qualityGatePlugin: {
       "security:audit",
     ],
   },
-  tools: [qualityGate],
+  tools: [qualityGate, qualityGateStatus],
 };
