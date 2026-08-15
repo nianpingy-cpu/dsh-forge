@@ -58,6 +58,15 @@ jobs:
           tar -xzf act.tar.gz -C /usr/local/bin act
           act --version
 
+      - name: Install k6 (integration fixtures, Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -sSL https://github.com/grafana/k6/releases/download/v0.53.0/k6-v0.53.0-linux-amd64.tar.gz -o k6.tar.gz
+          # The k6 release archive is directory-wrapped (k6-v0.53.0-linux-amd64/k6);
+          # strip the wrapper so the binary lands at /usr/local/bin/k6.
+          tar -xzf k6.tar.gz -C /usr/local/bin --strip-components=1
+          k6 version
+
       - name: Typecheck
         run: pnpm typecheck
 
