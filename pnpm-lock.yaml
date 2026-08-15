@@ -20,6 +20,9 @@ importers:
       '@dsh-forge/plugin-biome':
         specifier: workspace:*
         version: link:packages/plugin-biome
+      '@dsh-forge/plugin-docker':
+        specifier: workspace:*
+        version: link:packages/plugin-docker
       '@dsh-forge/plugin-ruff':
         specifier: workspace:*
         version: link:packages/plugin-ruff
@@ -101,6 +104,16 @@ importers:
       '@biomejs/biome':
         specifier: ^2.5.0
         version: 2.5.8
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.26)(typescript@5.9.3)
+
+  packages/plugin-docker:
+    dependencies:
+      '@dsh-forge/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(postcss@8.5.26)(typescript@5.9.3)
