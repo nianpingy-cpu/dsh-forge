@@ -1,6 +1,6 @@
 {
   "name": "@dsh-forge/presets",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Composable plugin presets for DeepSeek Harness (composition/config only; no plugin code duplication)",
   "license": "MIT",
   "type": "module",
@@ -15,9 +15,15 @@
   },
   "dependencies": {
     "@dsh-forge/core": "workspace:*",
+    "@dsh-forge/plugin-act": "workspace:*",
     "@dsh-forge/plugin-ast-grep": "workspace:*",
     "@dsh-forge/plugin-biome": "workspace:*",
+    "@dsh-forge/plugin-docker": "workspace:*",
+    "@dsh-forge/plugin-k6": "workspace:*",
+    "@dsh-forge/plugin-quality-gate": "workspace:*",
     "@dsh-forge/plugin-ruff": "workspace:*",
+    "@dsh-forge/plugin-semgrep": "workspace:*",
+    "@dsh-forge/plugin-trivy": "workspace:*",
     "@dsh-forge/plugin-uv": "workspace:*"
   },
   "devDependencies": {

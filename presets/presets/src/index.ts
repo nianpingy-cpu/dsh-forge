@@ -9,6 +9,12 @@ import { astGrepPlugin } from "@dsh-forge/plugin-ast-grep";
 import { ruffPlugin } from "@dsh-forge/plugin-ruff";
 import { biomePlugin } from "@dsh-forge/plugin-biome";
 import { uvPlugin } from "@dsh-forge/plugin-uv";
+import { semgrepPlugin } from "@dsh-forge/plugin-semgrep";
+import { trivyPlugin } from "@dsh-forge/plugin-trivy";
+import { qualityGatePlugin } from "@dsh-forge/plugin-quality-gate";
+import { actPlugin } from "@dsh-forge/plugin-act";
+import { dockerPlugin } from "@dsh-forge/plugin-docker";
+import { k6Plugin } from "@dsh-forge/plugin-k6";
 
 export interface Preset {
   name: string;
@@ -20,6 +26,8 @@ export interface Preset {
 const coding = Object.freeze([astGrepPlugin, ruffPlugin, biomePlugin]);
 const python = Object.freeze([ruffPlugin, uvPlugin]);
 const web = Object.freeze([biomePlugin, astGrepPlugin]);
+const security = Object.freeze([semgrepPlugin, trivyPlugin, qualityGatePlugin]);
+const devops = Object.freeze([actPlugin, dockerPlugin, k6Plugin]);
 
 export const PRESETS: readonly Preset[] = Object.freeze([
   Object.freeze({
@@ -39,6 +47,18 @@ export const PRESETS: readonly Preset[] = Object.freeze([
     description:
       "Web development: JS/TS/JSX/TSX lint+format (Biome) and search/rewrite (ast-grep)",
     plugins: web,
+  }),
+  Object.freeze({
+    name: "security",
+    description:
+      "Security scanning: code audit (Semgrep), container/IaC/secrets (Trivy), and the quality/security gate",
+    plugins: security,
+  }),
+  Object.freeze({
+    name: "devops",
+    description:
+      "DevOps toolchain: GitHub Actions runner (act), containers (Docker), and load testing (k6)",
+    plugins: devops,
   }),
 ]);
 

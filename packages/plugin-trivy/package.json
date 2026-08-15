@@ -1,6 +1,6 @@
 {
   "name": "@dsh-forge/plugin-trivy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Trivy tools for DeepSeek Harness: repo/config/secret/image scan and SBOM (findings to Diagnostic[], result types distinguished)",
   "license": "MIT",
   "type": "module",

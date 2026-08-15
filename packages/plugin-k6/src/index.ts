@@ -675,9 +675,9 @@ export const k6Plugin: {
 } = {
   metadata: {
     name: "@dsh-forge/plugin-k6",
-    version: "0.1.0",
+    version: "0.2.0",
     upstreamTool: "k6",
-    coreContractVersion: "0.1.0",
+    coreContractVersion: "0.2.0",
     capabilities: [
       "version",
       "run",

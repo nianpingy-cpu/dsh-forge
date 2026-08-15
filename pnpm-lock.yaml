@@ -217,15 +217,33 @@ importers:
       '@dsh-forge/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@dsh-forge/plugin-act':
+        specifier: workspace:*
+        version: link:../../packages/plugin-act
       '@dsh-forge/plugin-ast-grep':
         specifier: workspace:*
         version: link:../../packages/plugin-ast-grep
       '@dsh-forge/plugin-biome':
         specifier: workspace:*
         version: link:../../packages/plugin-biome
+      '@dsh-forge/plugin-docker':
+        specifier: workspace:*
+        version: link:../../packages/plugin-docker
+      '@dsh-forge/plugin-k6':
+        specifier: workspace:*
+        version: link:../../packages/plugin-k6
+      '@dsh-forge/plugin-quality-gate':
+        specifier: workspace:*
+        version: link:../../packages/plugin-quality-gate
       '@dsh-forge/plugin-ruff':
         specifier: workspace:*
         version: link:../../packages/plugin-ruff
+      '@dsh-forge/plugin-semgrep':
+        specifier: workspace:*
+        version: link:../../packages/plugin-semgrep
+      '@dsh-forge/plugin-trivy':
+        specifier: workspace:*
+        version: link:../../packages/plugin-trivy
       '@dsh-forge/plugin-uv':
         specifier: workspace:*
         version: link:../../packages/plugin-uv

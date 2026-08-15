@@ -8,9 +8,15 @@ import {
 } from "@dsh-forge/presets";
 
 describe("presets (V0.1.0: coding, python, web)", () => {
-  it("defines exactly the V0.1.0 preset set", () => {
+  it("defines exactly the V0.2.0 preset set", () => {
     const names = PRESETS.map((p) => p.name).sort();
-    expect(names).toEqual(["coding", "python", "web"]);
+    expect(names).toEqual([
+      "coding",
+      "devops",
+      "python",
+      "security",
+      "web",
+    ]);
   });
 
   it("each preset resolves to registered, valid, contract-aligned plugins", () => {
@@ -32,6 +38,8 @@ describe("presets (V0.1.0: coding, python, web)", () => {
     expect(resolvePreset("coding")?.name).toBe("coding");
     expect(resolvePreset("python")?.name).toBe("python");
     expect(resolvePreset("web")?.name).toBe("web");
+    expect(resolvePreset("security")?.name).toBe("security");
+    expect(resolvePreset("devops")?.name).toBe("devops");
     expect(resolvePreset("does-not-exist")).toBeUndefined();
     expect(() => resolvePresetOrThrow("does-not-exist")).toThrow(/unknown preset/i);
   });

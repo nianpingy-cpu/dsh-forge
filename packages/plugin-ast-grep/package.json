@@ -1,6 +1,6 @@
 {
   "name": "@dsh-forge/plugin-ast-grep",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "ast-grep tools for DeepSeek Harness: typed AST search, scan, inspect, rule test",
   "license": "MIT",
   "type": "module",

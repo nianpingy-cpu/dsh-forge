@@ -103,9 +103,9 @@ function goodPlugin(): Plugin {
   return {
     metadata: {
       name: "@dsh-forge/fixture-good",
-      version: "0.1.0",
+      version: "0.2.0",
       upstreamTool: "node",
-      coreContractVersion: "0.1.0",
+      coreContractVersion: "0.2.0",
       capabilities: ["echo"],
     },
     tools: [echoTool(), missingBinaryTool()],

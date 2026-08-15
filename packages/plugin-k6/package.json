@@ -1,6 +1,6 @@
 {
   "name": "@dsh-forge/plugin-k6",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "k6 tools for DeepSeek Harness: version, run, smoke, load, stress, summary, threshold check (load testing)",
   "license": "MIT",
   "type": "module",

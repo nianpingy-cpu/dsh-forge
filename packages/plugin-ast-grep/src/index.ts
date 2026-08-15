@@ -699,9 +699,9 @@ const astRewrite: ToolDefinition = {
 export const astGrepPlugin = {
   metadata: {
     name: "@dsh-forge/plugin-ast-grep",
-    version: "0.1.0",
+    version: "0.2.0",
     upstreamTool: "ast-grep",
-    coreContractVersion: "0.1.0",
+    coreContractVersion: "0.2.0",
     capabilities: ["ast-search:js", "ast-search:ts", "ast-search:py", "scan", "inspect", "rule-test", "rewrite"],
   },
   tools: [astSearch, astInspect, astScan, astRuleTest, astRewrite],

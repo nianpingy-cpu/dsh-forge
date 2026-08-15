@@ -848,9 +848,9 @@ export const trivyPlugin: {
 } = {
   metadata: {
     name: "@dsh-forge/plugin-trivy",
-    version: "0.1.0",
+    version: "0.2.0",
     upstreamTool: "trivy",
-    coreContractVersion: "0.1.0",
+    coreContractVersion: "0.2.0",
     capabilities: [
       "repo-scan",
       "config-scan",
