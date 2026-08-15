@@ -140,6 +140,31 @@ describe("trivy_repo_scan", () => {
     expect(result.error?.code).toBe("ToolFailure");
     expect(result.error?.message).not.toContain("TOKEN123");
     expect(result.error?.message).toContain("***@");
+    // No stdout/raw is surfaced on failure (nothing but the redacted message).
+    expect(result.raw).toBeUndefined();
+    expect(result.summary).toBe("trivy failed");
+  });
+
+  it("sanitizes user:pass@ credentials echoed into failure stderr", async () => {
+    const failRunner: ExecutionRunner = async () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr:
+        "FATAL repository https://robot:supersecret@registry.example.com/org/repo.git: not found",
+      timedOut: false,
+      aborted: false,
+      truncated: false,
+      durationMs: 1,
+    });
+    const result = await tool().execute(
+      { repo: "https://robot:supersecret@registry.example.com/org/repo.git" },
+      ctx(failRunner),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
+    expect(result.error?.message).not.toContain("supersecret");
+    expect(result.error?.message).toContain("***@");
+    expect(result.raw).toBeUndefined();
   });
 
   it("rejects an empty or leading-dash repo", async () => {

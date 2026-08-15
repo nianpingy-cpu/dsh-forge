@@ -71,6 +71,17 @@ function toolFailure(message: string): ToolResult {
   };
 }
 
+/**
+ * First non-empty stderr line (credential-redacted) or a stable exit-code
+ * fallback. Redaction happens here, at the point the stderr text is consumed,
+ * so a user-controlled target echoed into stderr (e.g. a tokenized repo URL)
+ * can never reach the model-facing message even if the call site changes.
+ */
+function trivyError(exitCode: number, stderr: string): string {
+  const line = stderr.trim().split("\n").find((l) => l.trim() !== "");
+  return redactCredentials(line ?? `exit code ${exitCode}`);
+}
+
 function permissionDenied(): ToolResult {
   return {
     ok: false,
@@ -573,10 +584,7 @@ const trivyRepoScan: ToolDefinition = {
     ]);
     if (!run.ok) return run.result;
     if (run.exitCode !== 0) {
-      return toolFailure(
-        run.stderr.trim().split("\n").find((l) => l.trim() !== "") ??
-          `exit code ${run.exitCode}`,
-      );
+      return toolFailure(trivyError(run.exitCode, run.stderr));
     }
     return reportResult(ctx.workspaceRoot, run, "vulnerability", "no vulnerabilities");
   },
@@ -613,10 +621,7 @@ const trivyConfigScan: ToolDefinition = {
     ]);
     if (!run.ok) return run.result;
     if (run.exitCode !== 0) {
-      return toolFailure(
-        run.stderr.trim().split("\n").find((l) => l.trim() !== "") ??
-          `exit code ${run.exitCode}`,
-      );
+      return toolFailure(trivyError(run.exitCode, run.stderr));
     }
     return reportResult(ctx.workspaceRoot, run, "misconfiguration", "no misconfigurations");
   },
@@ -652,10 +657,7 @@ const trivySecretScan: ToolDefinition = {
     ]);
     if (!run.ok) return run.result;
     if (run.exitCode !== 0) {
-      return toolFailure(
-        run.stderr.trim().split("\n").find((l) => l.trim() !== "") ??
-          `exit code ${run.exitCode}`,
-      );
+      return toolFailure(trivyError(run.exitCode, run.stderr));
     }
     // Secrets[].Match holds the plaintext secret values; never surface raw
     // output for the secret scanner (no leak to the model / logs).
@@ -703,10 +705,7 @@ const trivyImageScan: ToolDefinition = {
     ]);
     if (!run.ok) return run.result;
     if (run.exitCode !== 0) {
-      return toolFailure(
-        run.stderr.trim().split("\n").find((l) => l.trim() !== "") ??
-          `exit code ${run.exitCode}`,
-      );
+      return toolFailure(trivyError(run.exitCode, run.stderr));
     }
     return reportResult(ctx.workspaceRoot, run, "vulnerability", "no vulnerabilities");
   },
@@ -743,10 +742,7 @@ const trivySbom: ToolDefinition = {
     ]);
     if (!run.ok) return run.result;
     if (run.exitCode !== 0) {
-      return toolFailure(
-        run.stderr.trim().split("\n").find((l) => l.trim() !== "") ??
-          `exit code ${run.exitCode}`,
-      );
+      return toolFailure(trivyError(run.exitCode, run.stderr));
     }
     return sbomResult(ctx.workspaceRoot, run);
   },
