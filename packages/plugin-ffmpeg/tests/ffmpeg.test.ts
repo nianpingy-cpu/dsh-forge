@@ -351,7 +351,7 @@ describe("tool-specific validation", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("InvalidArguments");
-    expect(result.error?.message).toMatch(/playlist/i);
+    expect(result.error?.message).toMatch(/manifest|playlist/i);
   });
 
   it("rejects playlist containers on write tools (no confused deputy)", async () => {
@@ -364,7 +364,7 @@ describe("tool-specific validation", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("InvalidArguments");
-    expect(result.error?.message).toMatch(/playlist/i);
+    expect(result.error?.message).toMatch(/manifest|playlist/i);
   });
 
   it("rejects a renamed playlist by content signature (ffmpeg auto-detects HLS by content)", async () => {
@@ -383,7 +383,7 @@ describe("tool-specific validation", () => {
     );
     expect(probed.ok).toBe(false);
     expect(probed.error?.code).toBe("InvalidArguments");
-    expect(probed.error?.message).toMatch(/playlist/i);
+    expect(probed.error?.message).toMatch(/manifest|playlist/i);
 
     const transcode = () =>
       ffmpegPlugin.tools.find((t) => t.name === "video_transcode")!;
@@ -393,7 +393,21 @@ describe("tool-specific validation", () => {
     );
     expect(written.ok).toBe(false);
     expect(written.error?.code).toBe("InvalidArguments");
-    expect(written.error?.message).toMatch(/playlist/i);
+    expect(written.error?.message).toMatch(/manifest|playlist/i);
+  });
+
+  it("rejects a DASH MPD manifest by content signature", async () => {
+    writeFileSync(
+      join(workspaceRoot, "clip.mpd"),
+      '<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"><BaseURL>file:///tmp/private/video.mp4</BaseURL></MPD>',
+      "utf8",
+    );
+    const probe = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "media_probe")!;
+    const probed = await probe().execute({ input: "clip.mpd" }, ctx(mockRunner()));
+    expect(probed.ok).toBe(false);
+    expect(probed.error?.code).toBe("InvalidArguments");
+    expect(probed.error?.message).toMatch(/manifest|playlist/i);
   });
 
   it("does not rewrite backslashes into traversal in the concat list (POSIX)", async () => {
@@ -487,9 +501,15 @@ describe("tool-specific validation", () => {
   it("blocks writes through a symlink escaping the workspace (output)", async () => {
     const tool = () =>
       ffmpegPlugin.tools.find((t) => t.name === "video_transcode")!;
+    // Create the target first so the symlink is non-dangling: core's
+    // canonicalize then realpaths it to the outside location and the boundary
+    // check reports WorkspaceViolation (a dangling symlink would rethrow ENOENT
+    // as ToolFailure instead).
+    const target = join(workspaceRoot, "..", "outside.wav");
+    writeFileSync(target, "x", "utf8");
     const linkPath = join(workspaceRoot, "escape-out.wav");
     try {
-      symlinkSync(join(workspaceRoot, "..", "outside.wav"), linkPath, "file");
+      symlinkSync(target, linkPath, "file");
     } catch {
       return; // symlinks unavailable (e.g. Windows without privileges); skip
     }
@@ -504,9 +524,11 @@ describe("tool-specific validation", () => {
   it("blocks reads through a symlink escaping the workspace (input)", async () => {
     const tool = () =>
       ffmpegPlugin.tools.find((t) => t.name === "media_probe")!;
+    const target = join(workspaceRoot, "..", "secret.wav");
+    writeFileSync(target, "x", "utf8");
     const linkPath = join(workspaceRoot, "escape-in.wav");
     try {
-      symlinkSync(join(workspaceRoot, "..", "secret.wav"), linkPath, "file");
+      symlinkSync(target, linkPath, "file");
     } catch {
       return; // symlinks unavailable (e.g. Windows without privileges); skip
     }

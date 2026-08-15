@@ -224,14 +224,21 @@ function isPlaylistPath(p: string): boolean {
   return /\.(m3u8?|m3u)$/i.test(p);
 }
 
-/** HLS/m3u playlists start with #EXTM3U / #EXTINF (content signature). */
-const PLAYLIST_SIGNATURE = /^\s*#EXTM3U|^\s*#EXTINF/i;
+/**
+ * Dereferencing manifest signatures: HLS (#EXTM3U/#EXTINF), DASH MPD and
+ * Smooth Streaming are XML documents (<?xml ...?><MPD ... / <SmoothStreamingMedia
+ * ...). ffmpeg auto-detects these demuxers by content, so a renamed manifest
+ * (e.g. photo.mp4) would still dereference external files; this signature set
+ * catches the dereferencing container families.
+ */
+const MANIFEST_SIGNATURE =
+  /^\s*(#EXTM3U|#EXTINF)|^\s*<\?xml[^>]*>\s*<(MPD|SmoothStreamingMedia)|^\s*<(MPD|SmoothStreamingMedia)/i;
 
 /**
- * True when the file's leading bytes look like a playlist. ffmpeg auto-
- * detects the HLS demuxer by content, not extension, so a renamed playlist
- * (e.g. photo.mp4 containing #EXTM3U) would still dereference external files;
- * this bounded 2 KiB head read catches it without loading a large media file.
+ * True when the file's leading bytes look like a dereferencing manifest.
+ * ffmpeg auto-detects HLS/DASH/Smooth demuxers by content, not extension, so a
+ * renamed manifest would still dereference external files; this bounded 2 KiB
+ * head read catches it without loading a large media file.
  */
 function hasPlaylistSignature(absolute: string): boolean {
   let fd: number | undefined;
@@ -239,7 +246,7 @@ function hasPlaylistSignature(absolute: string): boolean {
     fd = openSync(absolute, "r");
     const buf = Buffer.alloc(2048);
     const n = readSync(fd, buf, 0, buf.length, 0);
-    return PLAYLIST_SIGNATURE.test(buf.subarray(0, n).toString("utf8"));
+    return MANIFEST_SIGNATURE.test(buf.subarray(0, n).toString("utf8"));
   } catch {
     // unreadable/missing input — let ffmpeg report it
     return false;
@@ -277,7 +284,7 @@ function resolveInput(
       return {
         ok: false,
         result: invalid(
-          "playlist containers (.m3u8/.m3u or #EXTM3U/#EXTINF) are not supported: they dereference external files",
+          "manifest containers (HLS/DASH/Smooth Streaming) are not supported: they dereference external files",
         ),
       };
     }
