@@ -310,9 +310,12 @@ const qualityGate: ToolDefinition = {
       );
     }
 
+    // The verdict and counts are computed on ALL findings — never on the
+    // truncated slice — so a security finding past maxFindings still fails
+    // the gate (only the returned diagnostics are capped for the model).
     const capped = diagnostics.slice(0, cap);
     const truncated = diagnostics.length > cap;
-    const { verdict, counts } = computeVerdict(capped, threshold, laneErrors);
+    const { verdict, counts } = computeVerdict(diagnostics, threshold, laneErrors);
 
     const laneSummary = outcomes
       .filter((o) => o.status !== "ok" || o.findings > 0)

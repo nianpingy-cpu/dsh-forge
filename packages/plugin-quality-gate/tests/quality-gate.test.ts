@@ -202,6 +202,28 @@ describe("quality_gate (ISSUE-018)", () => {
     }
   });
 
+  it("FAILS on a security finding even when it exceeds maxFindings (verdict uses all findings)", async () => {
+    // A web project: biome (warning) runs before trivy (secret -> error). With
+    // maxFindings=1 the returned slice keeps only the warning, but the verdict
+    // must still be FAIL because the secret is a finding beyond the cap.
+    const ws = makeWorkspace({ "src/index.ts": "const x: number = 1;\n" });
+    try {
+      const runner = mockRunner({
+        biome: async () => ({ exitCode: 0, stdout: BIOME_WARNING, stderr: "", ...OK }),
+        trivy: async () => ({ exitCode: 0, stdout: TRIVY_SECRET, stderr: "", ...OK }),
+      });
+      const r = await gate().execute(
+        { path: "src", maxFindings: 1 },
+        ctx(ws, runner),
+      );
+      expect(r.ok).toBe(true);
+      expect(r.summary).toMatch(/FAIL/);
+      expect((r.diagnostics ?? []).length).toBeLessThanOrEqual(1);
+    } finally {
+      cleanup(ws);
+    }
+  });
+
   it("passes the plugin contract suite", async () => {
     const ws = makeWorkspace({ "src/app.py": "x = 1\n" });
     try {
