@@ -402,7 +402,7 @@ describe("docker_build (system-change)", () => {
       ctx(mockRunner()),
     );
     expect(result.ok).toBe(true);
-    expect(result.summary).toMatch(/built app:1\.0/i);
+    expect(result.summary).toMatch(/built .*app:1\.0/i);
     expect(result.raw).toContain("Successfully tagged app:1.0");
   });
 

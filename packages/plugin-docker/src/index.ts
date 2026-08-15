@@ -17,6 +17,7 @@
  */
 import {
   validateArgs,
+  assertPermission,
   resolveInWorkspace,
   WorkspaceViolationError,
   parseJsonOutput,
@@ -26,6 +27,7 @@ import {
   type ExecutionResult,
 } from "@dsh-forge/core";
 import { statSync } from "node:fs";
+import { dirname } from "node:path";
 import { resolveDockerBinary, DOCKER_BINARY_HINT } from "./binary.js";
 
 const TOOL = "docker";
@@ -43,6 +45,18 @@ function binaryNotFound(binary: string): ToolResult {
     ok: false,
     summary: `docker binary not found (${binary})`,
     error: { code: "BinaryNotFound", message: DOCKER_BINARY_HINT },
+  };
+}
+
+function permissionDenied(): ToolResult {
+  return {
+    ok: false,
+    summary: "permission denied",
+    error: {
+      code: "PermissionDenied",
+      message:
+        "docker state change requires explicit approval (system-change)",
+    },
   };
 }
 
@@ -454,6 +468,63 @@ const dockerLogs: ToolDefinition = {
   },
 };
 
+/**
+ * Resolve a workspace compose project into a `docker compose` argv prefix.
+ * A directory selects the project (--project-directory); a file is passed
+ * with -f. Returns a canonical ToolResult on any path error (a tool must
+ * never throw).
+ */
+function resolveComposeArgv(
+  ctx: ToolContext,
+  path: string | undefined,
+): { ok: true; argv: string[] } | { ok: false; result: ToolResult } {
+  if (path === undefined) return { ok: true, argv: ["compose"] };
+  if (!isValidPathInput(path)) {
+    return {
+      ok: false,
+      result: invalid("path must be a non-empty workspace path"),
+    };
+  }
+  let absolute: string;
+  try {
+    absolute = resolveInWorkspace(ctx.workspaceRoot, path);
+  } catch (err) {
+    if (err instanceof WorkspaceViolationError) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          summary: "path escapes the workspace boundary",
+          error: {
+            code: "WorkspaceViolation",
+            message: `rejected: ${path}`,
+          },
+        },
+      };
+    }
+    // canonicalize() can throw non-violation errors for repo-controlled
+    // inputs (symlink loop ELOOP, dangling symlink ENOENT, EACCES); a tool
+    // must never throw — normalize to a ToolFailure.
+    return {
+      ok: false,
+      result: toolFailure(`path could not be resolved: ${String(err)}`),
+    };
+  }
+  const isDir = (() => {
+    try {
+      return statSync(absolute).isDirectory();
+    } catch {
+      return false;
+    }
+  })();
+  return {
+    ok: true,
+    argv: isDir
+      ? ["compose", "--project-directory", absolute]
+      : ["compose", "-f", absolute],
+  };
+}
+
 const dockerComposeStatus: ToolDefinition = {
   name: "docker_compose_status",
   description:
@@ -474,7 +545,50 @@ const dockerComposeStatus: ToolDefinition = {
     const validated = validateArgs(this.inputSchema, args);
     if (!validated.ok) return invalid(validated.error);
     const { path } = validated.value as { path?: string };
-    let argv: string[];
+    const project = resolveComposeArgv(ctx, path);
+    if (!project.ok) return project.result;
+    const run = await runDocker(ctx, [...project.argv, "ps", "--format", "json"]);
+    if (!run.ok) return run.result;
+    if (run.exec.exitCode !== 0) {
+      return toolFailure(firstErrorLine(run.exec.exitCode, run.exec.stderr));
+    }
+    const parsed = parseJsonArrayOrLines(run.exec.stdout);
+    if (!parsed.ok) return parsed.result;
+    return itemsResult("service", parsed.items);
+  },
+};
+
+const dockerBuild: ToolDefinition = {
+  name: "docker_build",
+  description:
+    "Build a Docker image from a workspace build context (system-change: builds an image; requires approval).",
+  mutationClass: "system-change",
+  inputSchema: {
+    type: "object",
+    properties: {
+      tag: {
+        type: "string",
+        description: "image name:tag to build, e.g. app:1.0",
+      },
+      path: {
+        type: "string",
+        description:
+          "workspace-relative build context directory or Dockerfile path (default: workspace root)",
+      },
+    },
+    required: ["tag"],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    if (
+      !assertPermission("system-change", ctx.permission ?? { approved: false })
+    ) {
+      return permissionDenied();
+    }
+    const { tag, path } = validated.value as { tag: string; path?: string };
+    if (!isValidName(tag)) return invalid("tag must be a non-empty image tag");
+    let argv: string[] = ["build", "-t", tag];
     if (path !== undefined) {
       if (!isValidPathInput(path)) {
         return invalid("path must be a non-empty workspace path");
@@ -493,36 +607,113 @@ const dockerComposeStatus: ToolDefinition = {
             },
           };
         }
-        // canonicalize() can throw non-violation errors for repo-controlled
-        // inputs: a symlink loop raises ELOOP, a dangling symlink ENOENT,
-        // EACCES on an unreadable ancestor. A tool must never throw —
-        // normalize to a ToolFailure.
         return toolFailure(`path could not be resolved: ${String(err)}`);
       }
-      const isDir = (() => {
+      const isFile = (() => {
         try {
-          return statSync(absolute).isDirectory();
+          return statSync(absolute).isFile();
         } catch {
           return false;
         }
       })();
-      // A directory selects the compose project; a file is passed with -f.
-      // --project-directory / -f are explicit absolute paths, so no repo
-      // config can re-target the scan.
-      argv = isDir
-        ? ["compose", "--project-directory", absolute, "ps", "--format", "json"]
-        : ["compose", "-f", absolute, "ps", "--format", "json"];
+      // A Dockerfile file uses -f with its directory as the build context.
+      argv = isFile
+        ? [...argv, "-f", absolute, dirname(absolute)]
+        : [...argv, absolute];
     } else {
-      argv = ["compose", "ps", "--format", "json"];
+      argv = [...argv, ctx.workspaceRoot];
     }
-    const run = await runDocker(ctx, argv);
+    const run = await runDocker(ctx, argv, { timeoutMs: 300_000 });
     if (!run.ok) return run.result;
     if (run.exec.exitCode !== 0) {
       return toolFailure(firstErrorLine(run.exec.exitCode, run.exec.stderr));
     }
-    const parsed = parseJsonArrayOrLines(run.exec.stdout);
-    if (!parsed.ok) return parsed.result;
-    return itemsResult("service", parsed.items);
+    return okResult(
+      `built image ${tag}`,
+      run.exec.stdout + run.exec.stderr,
+    );
+  },
+};
+
+const dockerComposeUp: ToolDefinition = {
+  name: "docker_compose_up",
+  description:
+    "Start the services of a docker compose project in detached mode (system-change: starts containers; requires approval).",
+  mutationClass: "system-change",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description:
+          "workspace-relative compose file or project directory (default: workspace root)",
+      },
+    },
+    required: [],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    if (
+      !assertPermission("system-change", ctx.permission ?? { approved: false })
+    ) {
+      return permissionDenied();
+    }
+    const { path } = validated.value as { path?: string };
+    const project = resolveComposeArgv(ctx, path);
+    if (!project.ok) return project.result;
+    const run = await runDocker(ctx, [...project.argv, "up", "-d"], {
+      timeoutMs: 300_000,
+    });
+    if (!run.ok) return run.result;
+    if (run.exec.exitCode !== 0) {
+      return toolFailure(firstErrorLine(run.exec.exitCode, run.exec.stderr));
+    }
+    return okResult(
+      "compose project started",
+      run.exec.stdout + run.exec.stderr,
+    );
+  },
+};
+
+const dockerComposeDown: ToolDefinition = {
+  name: "docker_compose_down",
+  description:
+    "Stop and remove the containers of a docker compose project (system-change: stops containers; requires approval).",
+  mutationClass: "system-change",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description:
+          "workspace-relative compose file or project directory (default: workspace root)",
+      },
+    },
+    required: [],
+  },
+  async execute(args, ctx) {
+    const validated = validateArgs(this.inputSchema, args);
+    if (!validated.ok) return invalid(validated.error);
+    if (
+      !assertPermission("system-change", ctx.permission ?? { approved: false })
+    ) {
+      return permissionDenied();
+    }
+    const { path } = validated.value as { path?: string };
+    const project = resolveComposeArgv(ctx, path);
+    if (!project.ok) return project.result;
+    const run = await runDocker(ctx, [...project.argv, "down"], {
+      timeoutMs: 300_000,
+    });
+    if (!run.ok) return run.result;
+    if (run.exec.exitCode !== 0) {
+      return toolFailure(firstErrorLine(run.exec.exitCode, run.exec.stderr));
+    }
+    return okResult(
+      "compose project stopped",
+      run.exec.stdout + run.exec.stderr,
+    );
   },
 };
 
@@ -548,7 +739,11 @@ export const dockerPlugin: {
       "inspect",
       "logs",
       "compose-status",
+      "build",
+      "compose-up",
+      "compose-down",
       "read-only",
+      "system-change",
     ],
   },
   tools: [
@@ -558,6 +753,9 @@ export const dockerPlugin: {
     dockerInspect,
     dockerLogs,
     dockerComposeStatus,
+    dockerBuild,
+    dockerComposeUp,
+    dockerComposeDown,
   ],
 };
 
