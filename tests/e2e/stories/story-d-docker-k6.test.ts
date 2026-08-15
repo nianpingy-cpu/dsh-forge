@@ -44,13 +44,16 @@ describe.skipIf(!hasDockerEnv || !hasK6)("story D: container app -> Docker -> k6
   it(
     "builds + runs the container, load-tests it with k6, then tears down",
     async () => {
-      const up = await dTool("docker_compose_up").execute(
-        { path: "docker-compose.yml" },
-        ctx(workspaceRoot),
-      );
-      expect(up.ok, up.error?.message).toBe(true);
-
+      let upSucceeded = false;
+      let downError: string | undefined;
       try {
+        const up = await dTool("docker_compose_up").execute(
+          { path: "docker-compose.yml" },
+          ctx(workspaceRoot),
+        );
+        upSucceeded = up.ok;
+        expect(up.ok, up.error?.message).toBe(true);
+
         await waitForHttp("http://localhost:8080/", 90_000);
 
         const perf = await kTool("k6_run").execute(
@@ -60,11 +63,23 @@ describe.skipIf(!hasDockerEnv || !hasK6)("story D: container app -> Docker -> k6
         expect(perf.ok, perf.error?.message).toBe(true);
         expect(perf.raw).toContain("status is 200");
       } finally {
-        const down = await dTool("docker_compose_down").execute(
-          { path: "docker-compose.yml" },
-          ctx(workspaceRoot),
-        );
-        expect(down.ok, down.error?.message).toBe(true);
+        // Always attempt teardown — even when `up` failed (port conflict,
+        // build/image-pull failure, container crash) — so no containers,
+        // networks or the bound port are leaked/orphaned. Best-effort: a
+        // teardown throw must not mask the root-cause error.
+        try {
+          const down = await dTool("docker_compose_down").execute(
+            { path: "docker-compose.yml" },
+            ctx(workspaceRoot),
+          );
+          if (upSucceeded) expect(down.ok, down.error?.message).toBe(true);
+        } catch (err) {
+          downError = String(err);
+        }
+      }
+      // Only reachable when the body succeeded: surface a teardown failure.
+      if (downError !== undefined) {
+        throw new Error(`compose teardown failed: ${downError}`);
       }
     },
     600_000,
