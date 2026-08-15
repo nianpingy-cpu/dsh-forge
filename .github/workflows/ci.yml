@@ -67,6 +67,9 @@ jobs:
           tar -xzf k6.tar.gz -C /usr/local/bin --strip-components=1
           k6 version
 
+      - name: Install ffmpeg (integration fixtures, all OS)
+        uses: FedericoCarboni/setup-ffmpeg@v3
+
       - name: Typecheck
         run: pnpm typecheck
 

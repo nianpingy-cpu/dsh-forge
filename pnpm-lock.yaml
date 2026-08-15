@@ -23,6 +23,9 @@ importers:
       '@dsh-forge/plugin-docker':
         specifier: workspace:*
         version: link:packages/plugin-docker
+      '@dsh-forge/plugin-ffmpeg':
+        specifier: workspace:*
+        version: link:packages/plugin-ffmpeg
       '@dsh-forge/plugin-k6':
         specifier: workspace:*
         version: link:packages/plugin-k6
@@ -112,6 +115,16 @@ importers:
         version: 8.5.1(postcss@8.5.26)(typescript@5.9.3)
 
   packages/plugin-docker:
+    dependencies:
+      '@dsh-forge/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.26)(typescript@5.9.3)
+
+  packages/plugin-ffmpeg:
     dependencies:
       '@dsh-forge/core':
         specifier: workspace:*
