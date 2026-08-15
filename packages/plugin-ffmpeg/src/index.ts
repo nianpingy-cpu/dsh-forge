@@ -1,7 +1,7 @@
-/**
- * FFmpeg adapter (ISSUE-023) — media probe / edit tools.
+﻿/**
+ * FFmpeg adapter (ISSUE-023) 鈥?media probe / edit tools.
  *
- * Typed arguments are compiled to ffmpeg/ffprobe argv[] — never a free-form
+ * Typed arguments are compiled to ffmpeg/ffprobe argv[] 鈥?never a free-form
  * `ffmpeg(command)` string (ADR-004, no arbitrary shell execution). Writes are
  * workspace-gated (workspace-write) with an overwrite guard: outputs inside
  * the workspace are never replaced unless `overwrite: true` (ffmpeg runs with
@@ -16,7 +16,7 @@
  *   thumbnail_generate  (workspace-write)  ffmpeg -ss -vframes 1
  *   media_compress      (workspace-write)  ffmpeg -crf
  *
- * (RED — the tools below are not implemented yet; tests are failing.)
+ * (RED 鈥?the tools below are not implemented yet; tests are failing.)
  */
 import {
   validateArgs,
@@ -262,7 +262,7 @@ function hasPlaylistSignature(absolute: string): boolean {
   try {
     if (!statSync(absolute).isFile()) return false;
   } catch {
-    // missing/unreadable input — let ffmpeg report it
+    // missing/unreadable input 鈥?let ffmpeg report it
     return false;
   }
   let fd: number | undefined;
@@ -273,7 +273,7 @@ function hasPlaylistSignature(absolute: string): boolean {
     const head = buf.subarray(0, n).toString("utf8").toLowerCase();
     return MANIFEST_MARKERS.some((m) => head.includes(m));
   } catch {
-    // unreadable/missing input — let ffmpeg report it
+    // unreadable/missing input 鈥?let ffmpeg report it
     return false;
   } finally {
     if (fd !== undefined) {
@@ -300,7 +300,7 @@ function resolveInput(
   try {
     const absolute = resolveInWorkspace(ctx.workspaceRoot, path);
     // A FIFO/pipe/socket/device input would block a synchronous open/read on
-    // the Node main thread (unkillable harness DoS — the tool timeout only
+    // the Node main thread (unkillable harness DoS 鈥?the tool timeout only
     // bounds the child process) and a directory cannot be probed. stat() never
     // blocks on a FIFO, so non-regular inputs are rejected before any open.
     // Missing files are left for ffmpeg to report.
@@ -444,7 +444,7 @@ const mediaProbe: ToolDefinition = {
         // -protocol_whitelist blocks network protocols (http/https/rtsp/...), so
         // a hostile playlist cannot trigger SSRF (e.g. cloud-metadata URLs).
         // Local `file://` references inside a hostile playlist remain readable
-        // by the harness user — a documented residual risk for untrusted media
+        // by the harness user 鈥?a documented residual risk for untrusted media
         // (ffmpeg's HLS demuxer additionally restricts segment extensions by
         // default). -probesize clamps ffmpeg's auto-detection window to the
         // guard window (PROBE_WINDOW_BYTES), so a manifest marker beyond it is
@@ -709,7 +709,7 @@ const videoConcat: ToolDefinition = {
     for (const p of a.inputs) {
       if (typeof p !== "string") return invalid("each input must be a string path");
       // ffmpeg's concat demuxer (av_get_token) cannot represent a single
-      // quote inside a quoted token — it truncates at the quote, silently
+      // quote inside a quoted token 鈥?it truncates at the quote, silently
       // concatenating a different file. Reject such paths outright.
       if (p.includes("'")) {
         return invalid("input path cannot contain a single quote");
@@ -926,7 +926,7 @@ export const ffmpegPlugin: {
     name: "@dsh-forge/plugin-ffmpeg",
     version: "0.1.0",
     upstreamTool: "ffmpeg",
-    coreContractVersion: "0.1.0",
+    coreContractVersion: "0.2.0",
     capabilities: [
       "probe",
       "clip",

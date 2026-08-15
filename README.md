@@ -22,7 +22,7 @@ Fix / Retry / Verify
 
 ## Status
 
-**V0.1.0** — published (tag `v0.1.0`). See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+**V0.2.0** — published (tag `v0.2.0`). See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Principles
 
@@ -56,6 +56,8 @@ Implemented (all with typed tools, contract suite, live integration tests):
 - `coding` — ast-grep + Ruff + Biome
 - `python` — Ruff + uv
 - `web` — Biome + ast-grep
+- `security` — Semgrep + Trivy + quality-gate
+- `devops` — act + Docker + k6
 
 Presets resolve to registered plugins and are validated against the current core contract (`CORE_VERSION`); unknown presets and duplicate registrations fail loudly.
 

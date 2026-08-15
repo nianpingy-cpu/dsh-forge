@@ -1,8 +1,8 @@
-/**
- * Trivy adapter (ISSUE-017) — vulnerability / misconfiguration / secret /
+﻿/**
+ * Trivy adapter (ISSUE-017) 鈥?vulnerability / misconfiguration / secret /
  * license / SBOM scanning.
  *
- * Typed tools compiled to trivy argv[] — no shell, no free-form commands.
+ * Typed tools compiled to trivy argv[] 鈥?no shell, no free-form commands.
  * Each tool tags its findings with a result-type prefix so the model can
  * distinguish vulnerability / misconfiguration / secret / license / SBOM:
  *   trivy_repo_scan     (network)  trivy repo --format json <repo>
@@ -334,7 +334,7 @@ function parseReport(run: {
   }
   // Strict shape validation: malformed-but-valid JSON (a proxy/error envelope
   // returned with exit 0, or a null/object entry inside Results) must surface
-  // as a ParseFailure — never a crash (unhandled rejection) and never a
+  // as a ParseFailure 鈥?never a crash (unhandled rejection) and never a
   // false-negative "clean" scan from a security scanner.
   if (data.Results !== undefined && !Array.isArray(data.Results)) {
     return {
@@ -545,7 +545,7 @@ function reportResult(
 ): ToolResult {
   const parsed = parseReport(run);
   if (!parsed.ok) return parsed.result;
-  // Redact the object already parsed by parseReport — never re-parse the raw
+  // Redact the object already parsed by parseReport 鈥?never re-parse the raw
   // string (a strict re-parse divergence must not fall back to emitting
   // unredacted plaintext secrets). Raw is rebuilt from the redacted object.
   const changed = redactReportObject(parsed.report);
@@ -583,8 +583,8 @@ function reportResult(
 
 /**
  * `trivy sbom --format json` emits trivy's own report JSON
- * (`{ ArtifactName, Results: [...] }`) — licenses/vulnerabilities found in the
- * scanned SBOM document — NOT a CycloneDX document. Parse the report shape
+ * (`{ ArtifactName, Results: [...] }`) 鈥?licenses/vulnerabilities found in the
+ * scanned SBOM document 鈥?NOT a CycloneDX document. Parse the report shape
  * into Diagnostics tagged license:/vuln: (SBOM-derived findings).
  */
 function sbomResult(
@@ -850,7 +850,7 @@ export const trivyPlugin: {
     name: "@dsh-forge/plugin-trivy",
     version: "0.1.0",
     upstreamTool: "trivy",
-    coreContractVersion: "0.1.0",
+    coreContractVersion: "0.2.0",
     capabilities: [
       "repo-scan",
       "config-scan",

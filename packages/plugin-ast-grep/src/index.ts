@@ -1,7 +1,7 @@
-/**
+﻿/**
  * ast-grep read adapter (ISSUE-009).
  *
- * Typed tools compiled to sg argv[] — no shell, no free-form commands.
+ * Typed tools compiled to sg argv[] 鈥?no shell, no free-form commands.
  * All tools are read-only (MutationClass: read).
  */
 import {
@@ -701,7 +701,7 @@ export const astGrepPlugin = {
     name: "@dsh-forge/plugin-ast-grep",
     version: "0.1.0",
     upstreamTool: "ast-grep",
-    coreContractVersion: "0.1.0",
+    coreContractVersion: "0.2.0",
     capabilities: ["ast-search:js", "ast-search:ts", "ast-search:py", "scan", "inspect", "rule-test", "rewrite"],
   },
   tools: [astSearch, astInspect, astScan, astRuleTest, astRewrite],

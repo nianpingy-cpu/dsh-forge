@@ -1,15 +1,15 @@
-/**
- * act adapter (ISSUE-015) — local GitHub Actions runner.
+﻿/**
+ * act adapter (ISSUE-015) 鈥?local GitHub Actions runner.
  *
- * Typed tools compiled to act argv[] — no shell, no free-form commands.
+ * Typed tools compiled to act argv[] 鈥?no shell, no free-form commands.
  *   read:            act_list_workflows, act_list_jobs, act_failure_summary
  *   process:         act_dry_run
  *   system-change:   act_run, act_run_job   (execute containers / change state
- *                     outside the workspace — permission-gated)
+ *                     outside the workspace 鈥?permission-gated)
  *
  * Docker is required to actually run jobs. Docker availability is probed
  * BEFORE invoking act for the run tools, and a missing/unreachable Docker is
- * reported as an explicit "Docker is not available" tool error — never as a
+ * reported as an explicit "Docker is not available" tool error 鈥?never as a
  * workflow failure. `act -l` (list) works without Docker.
  *
  * act reads `.actrc` from its process cwd and home dir, which is a flag-
@@ -35,7 +35,7 @@ import {
   ACT_BINARY_HINT,
 } from "./binary.js";
 
-// Platform → image overrides so act does not prompt interactively for a
+// Platform 鈫?image overrides so act does not prompt interactively for a
 // default image on first run (it otherwise blocks waiting for input).
 const PLATFORM_FLAGS = [
   "-P",
@@ -280,7 +280,7 @@ interface ParsedFailures {
 
 /**
  * Parse act run/dry-run output for failures. Matches act's textual markers
- * ("❌ Failure - <step>", "🏁 Job failed", "Error: ...") using the ASCII
+ * ("鉂?Failure - <step>", "馃弫 Job failed", "Error: ...") using the ASCII
  * substrings so parsing is robust across consoles/encodings.
  */
 function parseFailures(log: string): ParsedFailures {
@@ -545,7 +545,7 @@ export const actPlugin: {
     name: "@dsh-forge/plugin-act",
     version: "0.1.0",
     upstreamTool: "act",
-    coreContractVersion: "0.1.0",
+    coreContractVersion: "0.2.0",
     capabilities: [
       "list",
       "dry-run",
