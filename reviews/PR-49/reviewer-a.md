@@ -1,0 +1,36 @@
+# Review — reviewer-a
+
+- Verdict: **approve**
+- Confidence: 0.8
+
+## Blocking
+(none)
+
+## Non-blocking
+- packages/plugin-k6/src/index.ts: runTimeout() scales the process timeout from the requested CLI duration, but the CLI --duration flag does not override a script's `scenarios[].duration` (k6 per-scenario executors ignore the global duration flag). A script with a long scenario outlives the computed timeout (e.g. k6_stress default -> 390s; k6_run with duration:'1s' -> 91s) and is killed mid-run, returning an honest but spurious Timeout. Bounded by design (the cap is the safety net), but the limitation is undocumented and will surprise users of scenario-based scripts.
+- packages/plugin-k6/src/index.ts: isValidDuration() accepts only `\d+(ms|s|m|h)`, rejecting valid k6 values such as `1h30m`, `90s`, and fractional durations. Functional limitation, not a defect; the schema description already documents the accepted forms.
+- packages/plugin-k6/src/index.ts: k6_run/k6_smoke/k6_load/k6_stress return `ok: true` when k6 exits 1 (thresholds failed). This is intentional and matches k6 exit-code semantics, and k6_threshold_check is the canonical gate, but a model treating `ok` as pass/fail will read a failing load test as success. Consider surfacing failed thresholds as `Diagnostic[]` on exit-1 runs.
+- packages/plugin-k6/src/index.ts: k6_version treats any PATH-resolvable `k6` file as valid regardless of POSIX execute permission. Mitigated in practice because core's runProcess maps EACCES to BinaryNotFound as well, so the worst case is a slightly different error message; not a correctness failure.
+- packages/plugin-k6/src/index.ts: `redactCredentials` over-redacts email-like strings (`error: foo@bar.com` -> `error: ***@bar.com`) via the broad `word:chars@` pattern, which can mangle otherwise-useful diagnostic text. Cosmetic only.
+
+## Security
+- packages/plugin-k6/src/index.ts: the four process tools grant capabilities broader than the 'process' approval prompt communicates. k6 scripts can (a) make arbitrary network requests, (b) read files via k6's `open()` — which is NOT bounded by resolveInWorkspace, so it can read any file the harness process can access, including outside the workspace — and (c) exfiltrate those bytes over HTTP. The tool descriptions disclose network targets but not file-read/exfiltration. The mutationClass 'process' is the correct gate and the mechanism is sound, but the approval surface understates the capability; the descriptions should state that scripts are arbitrary programs with file-read + network-egress rights.
+- packages/plugin-k6/src/index.ts: no ceiling on `vus`. Durations are capped at ~28.5m, but `vus` accepts any positive integer, so an approved k6_load/k6_stress call with e.g. vus=500000 can OOM or destabilize the host long before the scaled timeout fires. Recommend a VU ceiling (or a combined scale guard) mirroring the duration ceiling.
+- packages/plugin-k6/src/index.ts: redactCredentials covers only URL userinfo (scheme://user:pass@ and word:chars@). Credentials in query strings (`?api_key=...`), headers, or cookies that k6 echoes in stderr/raw output pass through unredacted to the model on both success and failure paths. Defense-in-depth gap, not a boundary bypass.
+- .github/workflows/ci.yml: k6 is downloaded from GitHub releases and extracted with no SHA-256 checksum verification. Pinned tag + HTTPS mitigates, but a compromised/poisoned release installs an arbitrary binary as the CI user. Recommend verifying a pinned checksum.
+
+## Test gaps
+- tests/k6.test.ts: the BinaryNotFound path is only tested via a mock that returns `error.code === 'BinaryNotFound'` directly; the real missing-binary path (sentinel path -> spawn ENOENT -> core maps to BinaryNotFound) is never exercised end-to-end. A regression in core's ENOENT mapping or in the Windows sentinel would go unnoticed.
+- tests/k6.test.ts: no test for the `exec.truncated` -> ToolFailure branch of runK6.
+- tests/k6.test.ts: redaction is only asserted on the success path; the failure path (`firstErrorLine` via `k6RunResult`/`toolFailure`) is not tested with credentials in stderr.
+- tests/k6.test.ts: no boundary tests for `vus` (0, negative, float) on k6_run/k6_smoke/k6_load/k6_stress; only k6_run's duration-ceiling and leading-dash path are covered.
+- tests/k6.test.ts: the live tests silently pass when k6 is absent (`if (!hasRealK6) return`) and the summary-export live test swallows genuine failures (`if (res.error || res.exitCode !== 0 || !existsSync(outFile)) return`). A CI misconfiguration (k6 not actually installed) would still yield green.
+
+## Compatibility
+- Verified against packages/core/src: `coreContractVersion: '0.1.0'` matches CORE_VERSION; `this.inputSchema` matches the declared `execute(this: ToolDefinition, ...)` contract; `validateArgs` returns `{ok, value}` as assumed; runProcess sets `error` only on spawn failure (not non-zero exits), so the exit-0/exit-1 interpretation in runK6/k6RunResult is correct with real core; ENOENT/EACCES map to BinaryNotFound, matching the sentinel design.
+- packages/plugin-k6/src/binary.ts duplicates a per-plugin binary-resolution pattern rather than using a core helper — but core exports no binary resolver, and act/trivy/semgrep/ruff/uv/docker/biome/ast-grep all ship the identical pattern. Consistent with the codebase; not a new violation.
+- k6 scripts cannot read harness environment beyond core's DEFAULT_ENV_ALLOWLIST (PATH, TEMP, HOME, etc.). Scripts relying on __ENV secrets (e.g. K6_CLOUD_TOKEN) will not see them. Security-correct, but a functional limitation worth documenting.
+
+## Architecture
+- packages/plugin-k6/src/index.ts: the run tools return raw terminal text + exit-code interpretation instead of machine-readable output. The plugin does not pass `--summary-export` on run tools, so structured metrics require a separate k6 invocation before k6_summary/k6_threshold_check can parse them. This works around the 'structured output first' rule rather than satisfying it; wiring `--summary-export <workspace file>` into the run tools (with a workspace-write target) would align with the standard.
+- packages/plugin-k6/src/index.ts: threshold failures on exit-1 runs are not normalized into `Diagnostic[]`; they exist only as summary text on an `ok: true` result. The dedicated k6_threshold_check tool compensates, so this is a design choice, not a contract failure.
