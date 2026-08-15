@@ -373,36 +373,44 @@ describe("uv_remove", () => {
 });
 
 describe("contract suite", () => {
-  it("passes the shared plugin contract kit", async () => {
-    const report = await runContractSuite(uvPlugin, {
-      workspaceRoot,
-      runner: uvRunner,
-      missingBinaryTool: "uv_status",
-      missingBinaryToolArgs: { projectDir: PROJ },
-      toolArgs: {
-        uv_status: { valid: { projectDir: PROJ }, invalid: { projectDir: 42 } },
-        uv_tree: { valid: { projectDir: PROJ }, invalid: { projectDir: 42 } },
-        uv_python: { valid: { projectDir: PROJ }, invalid: { projectDir: 42 } },
-        uv_sync: { valid: { projectDir: PROJ }, invalid: { projectDir: 42 } },
-        uv_run: {
-          valid: { command: ["python", "--version"], projectDir: PROJ },
-          invalid: { command: "python" },
+  it(
+    "passes the shared plugin contract kit",
+    async () => {
+      const report = await runContractSuite(uvPlugin, {
+        workspaceRoot,
+        runner: uvRunner,
+        missingBinaryTool: "uv_status",
+        missingBinaryToolArgs: { projectDir: PROJ },
+        toolArgs: {
+          uv_status: { valid: { projectDir: PROJ }, invalid: { projectDir: 42 } },
+          uv_tree: { valid: { projectDir: PROJ }, invalid: { projectDir: 42 } },
+          uv_python: { valid: { projectDir: PROJ }, invalid: { projectDir: 42 } },
+          uv_sync: { valid: { projectDir: PROJ }, invalid: { projectDir: 42 } },
+          uv_run: {
+            valid: { command: ["python", "--version"], projectDir: PROJ },
+            invalid: { command: "python" },
+          },
+          uv_add: {
+            valid: { packages: ["httpx"], projectDir: PROJ },
+            invalid: { packages: "httpx" },
+          },
+          uv_remove: {
+            valid: { packages: ["httpx"], projectDir: PROJ },
+            invalid: { packages: 42 },
+          },
         },
-        uv_add: {
-          valid: { packages: ["httpx"], projectDir: PROJ },
-          invalid: { packages: "httpx" },
-        },
-        uv_remove: {
-          valid: { packages: ["httpx"], projectDir: PROJ },
-          invalid: { packages: 42 },
-        },
-      },
-    });
-    if (!report.passed) {
-      for (const check of report.checks) {
-        if (!check.passed) console.error("failed check:", check.name, check.detail);
+      });
+      if (!report.passed) {
+        for (const check of report.checks) {
+          if (!check.passed)
+            console.error("failed check:", check.name, check.detail);
+        }
       }
-    }
-    expect(report.passed).toBe(true);
-  });
+      expect(report.passed).toBe(true);
+    },
+    // Real-uv happy paths in the contract checks hit the network under
+    // parallel load; the 5s vitest default is too tight (same flake class as
+    // the other real-uv tests).
+    60_000,
+  );
 });
