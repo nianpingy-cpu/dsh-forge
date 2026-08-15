@@ -493,7 +493,11 @@ const dockerComposeStatus: ToolDefinition = {
             },
           };
         }
-        throw err;
+        // canonicalize() can throw non-violation errors for repo-controlled
+        // inputs: a symlink loop raises ELOOP, a dangling symlink ENOENT,
+        // EACCES on an unreadable ancestor. A tool must never throw —
+        // normalize to a ToolFailure.
+        return toolFailure(`path could not be resolved: ${String(err)}`);
       }
       const isDir = (() => {
         try {

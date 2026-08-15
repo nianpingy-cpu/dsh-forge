@@ -1,5 +1,11 @@
 import { describe, expect, it, beforeAll } from "vitest";
-import { mkdtempSync, cpSync, existsSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  cpSync,
+  existsSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -355,6 +361,23 @@ describe("docker_compose_status", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("normalizes an unresolvable path (symlink loop) to a ToolFailure, never a throw", async () => {
+    const loopPath = join(workspaceRoot, "self-loop");
+    try {
+      // self-referential symlink -> realpath raises ELOOP inside
+      // resolveInWorkspace's canonicalize; the tool must normalize it.
+      symlinkSync("self-loop", loopPath, "file");
+    } catch {
+      return; // symlink creation unavailable (e.g. Windows without privileges); skip
+    }
+    const result = await tool().execute(
+      { path: "self-loop" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("ToolFailure");
   });
 });
 
