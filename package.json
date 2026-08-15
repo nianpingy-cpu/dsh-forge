@@ -33,6 +33,7 @@
     "@dsh-forge/plugin-docker": "workspace:*",
     "@dsh-forge/plugin-k6": "workspace:*",
     "@dsh-forge/plugin-ffmpeg": "workspace:*",
+    "@dsh-forge/plugin-quality-gate": "workspace:*",
     "@dsh-forge/presets": "workspace:*",
     "@eslint/js": "^9.30.0",
     "@types/estree": "^1.0.7",

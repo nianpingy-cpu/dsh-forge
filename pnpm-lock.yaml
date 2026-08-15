@@ -29,6 +29,9 @@ importers:
       '@dsh-forge/plugin-k6':
         specifier: workspace:*
         version: link:packages/plugin-k6
+      '@dsh-forge/plugin-quality-gate':
+        specifier: workspace:*
+        version: link:packages/plugin-quality-gate
       '@dsh-forge/plugin-ruff':
         specifier: workspace:*
         version: link:packages/plugin-ruff
@@ -142,6 +145,28 @@ importers:
       '@dsh-forge/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.26)(typescript@5.9.3)
+
+  packages/plugin-quality-gate:
+    dependencies:
+      '@dsh-forge/core':
+        specifier: workspace:*
+        version: link:../core
+      '@dsh-forge/plugin-biome':
+        specifier: workspace:*
+        version: link:../plugin-biome
+      '@dsh-forge/plugin-ruff':
+        specifier: workspace:*
+        version: link:../plugin-ruff
+      '@dsh-forge/plugin-semgrep':
+        specifier: workspace:*
+        version: link:../plugin-semgrep
+      '@dsh-forge/plugin-trivy':
+        specifier: workspace:*
+        version: link:../plugin-trivy
     devDependencies:
       tsup:
         specifier: ^8.5.0
