@@ -432,6 +432,42 @@ describe("tool-specific validation", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("WorkspaceViolation");
   });
+
+  it("passes -protocol_whitelist to ffprobe and ffmpeg (no SSRF / file-protocol reads)", async () => {
+    const probe = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "media_probe")!;
+    const transcode = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "video_transcode")!;
+    const calls: string[][] = [];
+    const recorder: ExecutionRunner = async (req) => {
+      calls.push([...req.args]);
+      return { exitCode: 0, stdout: FFMPEG_OUTPUT, stderr: "", ...OK };
+    };
+    await probe().execute({ input: "tiny.wav" }, ctx(recorder));
+    await transcode().execute({ input: "tiny.wav", output: "o.wav" }, ctx(recorder));
+    for (const args of calls) {
+      expect(args).toContain("-protocol_whitelist");
+      expect(args).toContain("file,pipe,fd");
+    }
+  });
+
+  it("never leaks harness secrets to child processes (core env allowlist)", async () => {
+    const core = await import("@dsh-forge/core");
+    process.env.DSH_TEST_SECRET = "sekret-value";
+    try {
+      const res = await core.runProcess({
+        binary: process.execPath,
+        args: ["-e", "console.log(process.env.DSH_TEST_SECRET ?? 'absent')"],
+        cwd: workspaceRoot,
+        timeoutMs: 10_000,
+      });
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout).not.toContain("sekret");
+      expect(res.stdout).toContain("absent");
+    } finally {
+      delete process.env.DSH_TEST_SECRET;
+    }
+  });
 });
 
 describe("robustness", () => {

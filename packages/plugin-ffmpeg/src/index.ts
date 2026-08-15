@@ -147,6 +147,10 @@ async function runBinary(
   const timeoutMs = opts.timeoutMs ?? 300_000;
   let exec: ExecutionResult;
   try {
+    // No `env` is passed: core's DEFAULT_ENV_ALLOWLIST is applied to every
+    // child (never the full inherited environment), so harness secrets such
+    // as DEEPSEEK_API_KEY can never reach ffmpeg/ffprobe while they parse
+    // untrusted media. Verified by a test against runProcess.
     exec = await ctx.run({
       binary,
       args: [...args],
@@ -333,7 +337,20 @@ const mediaProbe: ToolDefinition = {
       ctx,
       resolveFfprobeBinary(),
       FFPROBE_BINARY_HINT,
-      ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", resolved.absolute],
+      [
+        // Restrict ffprobe to local protocols: a hostile media file (e.g. an
+        // m3u8 whose segments point at http://169.254.169.254/ or file://...)
+        // must not trigger SSRF or arbitrary file reads from the harness.
+        "-protocol_whitelist",
+        "file,pipe,fd",
+        "-v",
+        "error",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        resolved.absolute,
+      ],
       { timeoutMs: 60_000 },
     );
     if (!run.ok) return run.result;
@@ -437,12 +454,13 @@ async function runWrite(
   const argv = buildArgv({ input, inputs, outputAbs: output.absolute, overwrite });
   // -hide_banner -v error: suppresses ffmpeg's version banner and info output
   // so the first non-empty stderr line on failure is the real error (not the
-  // banner), and the model-facing ToolFailure message is meaningful.
+  // banner). -protocol_whitelist file,pipe,fd blocks SSRF / arbitrary file
+  // reads from hostile media (m3u8 segment URLs, file:// references).
   const run = await runBinary(
     ctx,
     resolveFfmpegBinary(),
     FFMPEG_BINARY_HINT,
-    ["-hide_banner", "-v", "error", ...argv],
+    ["-hide_banner", "-v", "error", "-protocol_whitelist", "file,pipe,fd", ...argv],
   );
   if (!run.ok) return run.result;
   if (run.exec.exitCode !== 0) {
@@ -594,6 +612,8 @@ const videoConcat: ToolDefinition = {
           "-hide_banner",
           "-v",
           "error",
+          "-protocol_whitelist",
+          "file,pipe,fd",
           overwriteFlag(overwrite),
           "-f",
           "concat",
