@@ -8,11 +8,13 @@ import {
 } from "@dsh-forge/presets";
 
 describe("presets (V0.1.0: coding, python, web)", () => {
-  it("defines exactly the V0.2.0 preset set", () => {
+  it("defines exactly the V0.2.0 preset set (full: 7 presets)", () => {
     const names = PRESETS.map((p) => p.name).sort();
     expect(names).toEqual([
       "coding",
       "devops",
+      "full",
+      "media",
       "python",
       "security",
       "web",
@@ -40,6 +42,8 @@ describe("presets (V0.1.0: coding, python, web)", () => {
     expect(resolvePreset("web")?.name).toBe("web");
     expect(resolvePreset("security")?.name).toBe("security");
     expect(resolvePreset("devops")?.name).toBe("devops");
+    expect(resolvePreset("media")?.name).toBe("media");
+    expect(resolvePreset("full")?.name).toBe("full");
     expect(resolvePreset("does-not-exist")).toBeUndefined();
     expect(() => resolvePresetOrThrow("does-not-exist")).toThrow(/unknown preset/i);
   });

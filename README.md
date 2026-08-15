@@ -58,6 +58,8 @@ Implemented (all with typed tools, contract suite, live integration tests):
 - `web` — Biome + ast-grep
 - `security` — Semgrep + Trivy + quality-gate
 - `devops` — act + Docker + k6
+- `media` — FFmpeg
+- `full` — every plugin + the quality gate
 
 Presets resolve to registered plugins and are validated against the current core contract (`CORE_VERSION`); unknown presets and duplicate registrations fail loudly.
 

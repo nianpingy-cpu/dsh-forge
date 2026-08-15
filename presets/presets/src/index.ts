@@ -15,6 +15,7 @@ import { qualityGatePlugin } from "@dsh-forge/plugin-quality-gate";
 import { actPlugin } from "@dsh-forge/plugin-act";
 import { dockerPlugin } from "@dsh-forge/plugin-docker";
 import { k6Plugin } from "@dsh-forge/plugin-k6";
+import { ffmpegPlugin } from "@dsh-forge/plugin-ffmpeg";
 
 export interface Preset {
   name: string;
@@ -28,6 +29,20 @@ const python = Object.freeze([ruffPlugin, uvPlugin]);
 const web = Object.freeze([biomePlugin, astGrepPlugin]);
 const security = Object.freeze([semgrepPlugin, trivyPlugin, qualityGatePlugin]);
 const devops = Object.freeze([actPlugin, dockerPlugin, k6Plugin]);
+const media = Object.freeze([ffmpegPlugin]);
+const full = Object.freeze([
+  astGrepPlugin,
+  ruffPlugin,
+  biomePlugin,
+  uvPlugin,
+  actPlugin,
+  semgrepPlugin,
+  trivyPlugin,
+  dockerPlugin,
+  k6Plugin,
+  ffmpegPlugin,
+  qualityGatePlugin,
+]);
 
 export const PRESETS: readonly Preset[] = Object.freeze([
   Object.freeze({
@@ -59,6 +74,18 @@ export const PRESETS: readonly Preset[] = Object.freeze([
     description:
       "DevOps toolchain: GitHub Actions runner (act), containers (Docker), and load testing (k6)",
     plugins: devops,
+  }),
+  Object.freeze({
+    name: "media",
+    description:
+      "Media processing: probe, clip, transcode, concat, audio, thumbnail and compress (FFmpeg)",
+    plugins: media,
+  }),
+  Object.freeze({
+    name: "full",
+    description:
+      "Every plugin: ast-grep, Ruff, Biome, uv, act, Semgrep, Trivy, Docker, k6, FFmpeg and the quality gate",
+    plugins: full,
   }),
 ]);
 
