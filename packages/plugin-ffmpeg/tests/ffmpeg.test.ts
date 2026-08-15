@@ -6,6 +6,7 @@ import {
   statSync,
   writeFileSync,
   symlinkSync,
+  readFileSync,
 } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -338,6 +339,32 @@ describe("tool-specific validation", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("does not rewrite backslashes into traversal in the concat list (POSIX)", async () => {
+    if (process.platform === "win32") return; // Windows resolves \\ differently
+    let listContent = "";
+    const reader: ExecutionRunner = async (req) => {
+      const i = req.args.indexOf("-i");
+      const listPath = req.args[i + 1];
+      if (listPath && existsSync(listPath)) {
+        listContent = readFileSync(listPath, "utf8");
+      }
+      return { exitCode: 0, stdout: "ok", stderr: "", ...OK };
+    };
+    const concat = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "video_concat")!;
+    const result = await concat().execute(
+      { inputs: ["..\\..\\..\\tmp\\secret.mp4"], output: "o.wav" },
+      ctx(reader),
+    );
+    expect(result.ok).toBe(true);
+    // The literal backslash path must NOT be rewritten into forward-slash
+    // '..' traversal (which -safe 0 would honor as an arbitrary file read).
+    expect(listContent).not.toContain("../../../");
+    expect(listContent).not.toMatch(/\/file '[^']*\/\.\.\//);
+    // Backslashes are escaped for av_get_token (\\ -> literal \), preserved.
+    expect(listContent).toContain("..\\\\..\\\\..\\\\tmp\\\\secret.mp4");
   });
 
   it("redacts embedded credentials from successful write output", async () => {

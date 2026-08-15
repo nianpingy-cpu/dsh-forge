@@ -599,12 +599,19 @@ const videoConcat: ToolDefinition = {
       if (!r.ok) return r.result;
       resolved.push(r.absolute);
     }
-    // ffmpeg concat list format: av_get_token honors backslash escapes and
-    // normalizes nothing else; paths are normalized to forward slashes and
-    // are single-quote-free (validated above).
+    // ffmpeg concat list format: av_get_token treats '\' as an escape, so a
+    // literal backslash in a filename (legal on POSIX, where the boundary
+    // check preserves it) is written as '\\'. We deliberately do NOT
+    // normalize '\' to '/' here: on POSIX that rewrite happens after the
+    // workspace-boundary check and would synthesize forward-slash '..'
+    // traversal (arbitrary file read via -safe 0). On Windows core's
+    // resolveInWorkspace already returns forward slashes, so no rewrite is
+    // needed. Paths are single-quote-free (validated above).
     const runtime = mkdtempSync(join(tmpdir(), "dsh-ffmpeg-concat-"));
     try {
-      const list = resolved.map((p) => `file '${p.replace(/\\/g, "/")}'`).join("\n");
+      const list = resolved
+        .map((p) => `file '${p.replace(/\\/g, "\\\\")}'`)
+        .join("\n");
       const listPath = join(runtime, "list.txt");
       writeFileSync(listPath, list + "\n", "utf8");
       const run = await runBinary(
