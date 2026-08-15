@@ -141,7 +141,7 @@ function mockRunner(
         return {
           exitCode: 0,
           stdout: "2026-01-01T10:00:00 started\n2026-01-01T10:00:01 ready",
-          stderr: "",
+          stderr: "2026-01-01T10:00:02 [warn] disk almost full",
           ...OK,
         };
       case "compose":
@@ -276,10 +276,12 @@ describe("docker_logs", () => {
   const tool = () =>
     dockerPlugin.tools.find((t) => t.name === "docker_logs")!;
 
-  it("returns container logs", async () => {
+  it("returns container logs (stdout and stderr streams merged)", async () => {
     const result = await tool().execute({ name: "web" }, ctx(mockRunner()));
     expect(result.ok).toBe(true);
     expect(result.raw).toContain("ready");
+    // docker forwards container stderr to the CLI stderr; it must not be dropped.
+    expect(result.raw).toContain("[warn] disk almost full");
     expect(result.summary).toMatch(/logs for web/i);
   });
 

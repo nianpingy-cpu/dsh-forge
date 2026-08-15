@@ -442,9 +442,14 @@ const dockerLogs: ToolDefinition = {
     if (run.exec.exitCode !== 0) {
       return toolFailure(firstErrorLine(run.exec.exitCode, run.exec.stderr));
     }
+    // `docker logs` forwards the container's stdout to the CLI stdout and its
+    // stderr to the CLI stderr; most runtimes (nginx, app loggers) write to
+    // stderr, so returning only stdout would silently drop most logs. Merge
+    // both streams into raw.
+    const combined = run.exec.stdout + run.exec.stderr;
     return okResult(
       `logs for ${name} (last ${tailN} lines)`,
-      run.exec.stdout,
+      combined,
     );
   },
 };
