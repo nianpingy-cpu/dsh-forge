@@ -84,10 +84,27 @@ function firstErrorLine(tool: string, exitCode: number, stderr: string): string 
   return redactCredentials(line ?? `${tool} exited with code ${exitCode}`);
 }
 
-/** Reject empty or leading-dash paths (flag injection). */
+/** True when the string contains control characters (\\x00-\\x1f, \\x7f). */
+function hasControlChars(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return true;
+  }
+  return false;
+}
+
+/**
+ * Reject empty, leading-dash or control-character paths (flag injection).
+ * Control characters are rejected because a path with \\n/\\r written into the
+ * ffmpeg concat list file would become a literal directive line (arbitrary-
+ * file-read via -safe 0), bypassing the workspace boundary.
+ */
 function isValidPathInput(value: unknown): value is string {
   return (
-    typeof value === "string" && value.trim() !== "" && !/^\s*-/.test(value)
+    typeof value === "string" &&
+    value.trim() !== "" &&
+    !/^\s*-/.test(value) &&
+    !hasControlChars(value)
   );
 }
 
@@ -351,7 +368,12 @@ const mediaProbe: ToolDefinition = {
     const fmt = typeof format.format_name === "string" ? format.format_name : "?";
     const dur = typeof format.duration === "string" ? `${format.duration}s` : "?";
     const summary = `media probe: ${fmt}, duration ${dur}, ${streams.length} stream(s) [${kinds || "none"}]`;
-    return okResult(summary, JSON.stringify(data, null, 2));
+    // ffprobe JSON carries format.filename, which can embed credentials in the
+    // path; redact the model-visible raw.
+    return okResult(
+      summary,
+      redactCredentials(JSON.stringify(data, null, 2)),
+    );
   },
 };
 
@@ -418,7 +440,13 @@ async function runWrite(
   if (run.exec.exitCode !== 0) {
     return toolFailure(firstErrorLine("ffmpeg", run.exec.exitCode, run.exec.stderr));
   }
-  return okResult(`${action} -> ${args.output}`, run.exec.stdout + run.exec.stderr);
+  // ffmpeg echoes the full input/output paths on stderr; a workspace path
+  // containing user:pass@ or scheme://user@ would leak into the model-visible
+  // result, so the success-path raw is credential-redacted too.
+  return okResult(
+    `${action} -> ${args.output}`,
+    redactCredentials(run.exec.stdout + run.exec.stderr),
+  );
 }
 
 const videoClip: ToolDefinition = {
@@ -569,7 +597,7 @@ const videoConcat: ToolDefinition = {
       }
       return okResult(
         `concatenated -> ${a.output}`,
-        run.exec.stdout + run.exec.stderr,
+        redactCredentials(run.exec.stdout + run.exec.stderr),
       );
     } finally {
       // best-effort cleanup (a throw must never become an unhandled rejection)

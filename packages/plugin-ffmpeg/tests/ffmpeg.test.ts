@@ -301,6 +301,63 @@ describe("tool-specific validation", () => {
     expect(a.error?.code).toBe("InvalidArguments");
     expect(b.error?.code).toBe("InvalidArguments");
   });
+
+  it("rejects control characters in paths (concat list injection)", async () => {
+    const concat = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "video_concat")!;
+    const result = await concat().execute(
+      { inputs: ["tiny.wav\nfile '/etc/passwd'"], output: "o.wav" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+
+    const probe = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "media_probe")!;
+    const probed = await probe().execute(
+      { input: "tiny\r.wav" },
+      ctx(mockRunner()),
+    );
+    expect(probed.ok).toBe(false);
+    expect(probed.error?.code).toBe("InvalidArguments");
+  });
+
+  it("redacts embedded credentials from successful write output", async () => {
+    const tool = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "video_transcode")!;
+    const leaky: ExecutionRunner = async () => ({
+      exitCode: 0,
+      stdout: "Output #0, to 'http://user:supersecret@host/out.wav':",
+      stderr: "",
+      ...OK,
+    });
+    const result = await tool().execute(
+      { input: "tiny.wav", output: "o.wav" },
+      ctx(leaky),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.raw).not.toContain("supersecret");
+    expect(result.raw).toContain("***@");
+  });
+
+  it("redacts embedded credentials from probe output", async () => {
+    const tool = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "media_probe")!;
+    const leaky: ExecutionRunner = async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({
+        format: {
+          format_name: "wav",
+          filename: "http://user:supersecret@host/x.wav",
+        },
+      }),
+      stderr: "",
+      ...OK,
+    });
+    const result = await tool().execute({ input: "tiny.wav" }, ctx(leaky));
+    expect(result.ok).toBe(true);
+    expect(result.raw).not.toContain("supersecret");
+  });
 });
 
 describe("robustness", () => {
