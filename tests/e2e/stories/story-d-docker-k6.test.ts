@@ -61,7 +61,12 @@ describe.skipIf(!hasDockerEnv || !hasK6)("story D: container app -> Docker -> k6
           ctx(workspaceRoot),
         );
         expect(perf.ok, perf.error?.message).toBe(true);
-        expect(perf.raw).toContain("status is 200");
+        // k6_run only reports "all thresholds passed" when k6 exited 0; exit
+        // 1 (thresholds failed, e.g. p(95) > 1000ms) yields a different
+        // summary, so this is a real performance assertion.
+        expect(perf.summary).toMatch(/all thresholds passed/);
+        // every request returned 200 (100% check pass rate)
+        expect(perf.raw).toMatch(/checks[.:]+\s*100(?:\.0+)?%/);
       } finally {
         // Always attempt teardown — even when `up` failed (port conflict,
         // build/image-pull failure, container crash) — so no containers,
