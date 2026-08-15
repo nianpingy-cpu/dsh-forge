@@ -2,7 +2,6 @@ import { describe, expect, it, beforeAll } from "vitest";
 import {
   mkdtempSync,
   cpSync,
-  existsSync,
   statSync,
   symlinkSync,
 } from "node:fs";
@@ -32,28 +31,16 @@ beforeAll(() => {
 });
 
 /**
- * Real-runner used by integration tests: delegates to runProcess (real docker
- * on CI, which ships preinstalled on ubuntu-latest). On sandboxes where docker
- * is absent, spawn is blocked with BinaryNotFound and we fall back to a canned
- * success so the suite stays green locally while still exercising real docker
- * on CI.
+ * Real-runner used by the live (opt-in) integration tests: delegates directly
+ * to runProcess so real docker is exercised on CI (preinstalled on
+ * ubuntu-latest). There is deliberately NO BinaryNotFound fallback here —
+ * fabricating a success would make the missing-binary failure mode pass
+ * silently (the reviewer-flagged hazard) and would let the live compose test
+ * proceed against a bogus "27.0.0" stdout. The live tests are all gated on
+ * `hasRealDocker` (binary present), so without docker they skip cleanly.
  */
-async function dockerRunner(req: ExecutionRequest): Promise<ExecutionResult> {
-  const result = await runProcess(req);
-  if (result.error?.code === "BinaryNotFound") {
-    if (req.cwd && existsSync(req.cwd)) {
-      return {
-        exitCode: 0,
-        stdout: "27.0.0",
-        stderr: "",
-        timedOut: false,
-        aborted: false,
-        truncated: false,
-        durationMs: 1,
-      };
-    }
-  }
-  return result;
+function dockerRunner(req: ExecutionRequest): Promise<ExecutionResult> {
+  return runProcess(req);
 }
 
 const ctx = (runner: ExecutionRunner, approved = true): ToolContext => ({
