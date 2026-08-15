@@ -22,7 +22,7 @@ Fix / Retry / Verify
 
 ## Status
 
-**Early development.** Not published yet. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+**V0.1.0** — published (tag `v0.1.0`). See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Principles
 
@@ -32,9 +32,47 @@ Fix / Retry / Verify
 4. **Explicit permissions.** Every tool declares a `MutationClass` (`read`, `workspace-write`, `network`, `process`, `system-change`, `destructive`) and honors the DSH permission system.
 5. **Upstream compatibility is pinned.** See `compatibility/deepseek-harness.json`.
 
-## Planned plugins
+## Plugins
 
-Implemented: ast-grep · Ruff · Biome · uv · act · Semgrep · Trivy. Planned: Docker · k6 · FFmpeg
+Implemented (all with typed tools, contract suite, live integration tests):
+
+| Plugin | Package | Tools |
+| --- | --- | --- |
+| ast-grep | `@dsh-forge/plugin-ast-grep` | search, scan, rewrite |
+| Ruff | `@dsh-forge/plugin-ruff` | check, format-check, explain, fix, format |
+| Biome | `@dsh-forge/plugin-biome` | check, lint, format-check, fix, format |
+| uv | `@dsh-forge/plugin-uv` | run, sync, add, remove, tree |
+| act | `@dsh-forge/plugin-act` | list, run, status |
+| Semgrep | `@dsh-forge/plugin-semgrep` | scan |
+| Trivy | `@dsh-forge/plugin-trivy` | fs, image, sbom, config, version |
+| Docker | `@dsh-forge/plugin-docker` | ps, images, logs, inspect, version, compose + stateful run/exec |
+| k6 | `@dsh-forge/plugin-k6` | version, run, smoke, load, stress, summary, threshold-check |
+| FFmpeg | `@dsh-forge/plugin-ffmpeg` | probe, clip, transcode, concat, audio-extract, audio-convert, thumbnail, compress |
+
+## Presets
+
+`@dsh-forge/presets` composes plugins into ready-made bundles (configuration only — no plugin code duplication):
+
+- `coding` — ast-grep + Ruff + Biome
+- `python` — Ruff + uv
+- `web` — Biome + ast-grep
+
+Presets resolve to registered plugins and are validated against the current core contract (`CORE_VERSION`); unknown presets and duplicate registrations fail loudly.
+
+## E2E
+
+`tests/e2e/` ships a minimal host shim (`host.ts`) plus two suites:
+
+- **Deterministic no-API integration** — loads a real plugin, registers its tools, routes a typed call through the core contract, and asserts the canonical structured result (no model API).
+- **Host-shim E2E (deterministic)** — loads a preset, registers every tool, and routes a typed call to a structured result.
+
+> **Blocked sub-task (V0.1.0):** real DeepSeek Harness integration (Cordis
+> plugin loading, host/client aggregation, DSH permission hook) is **explicitly
+> blocked** — the pinned compatibility manifest (`compatibility/deepseek-harness.json`)
+> lists the DSH permission-hook API as TBD, so no real-harness assertions can
+> be made yet. npm-publish is likewise a blocked sub-task (release is a
+> GitHub Release + tag). Per ISSUE-013's exit criteria, deferred sub-tasks are
+> marked blocked with everything else green.
 
 ## License
 

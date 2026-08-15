@@ -16,5 +16,5 @@
     "noEmit": true,
     "types": ["vitest/globals"]
   },
-  "include": ["tests/**/*.ts", "packages/*/src/**/*.ts", "packages/*/tests/**/*.ts", "vitest.config.ts", "eslint.config.js"]
+  "include": ["tests/**/*.ts", "packages/*/src/**/*.ts", "packages/*/tests/**/*.ts", "presets/*/src/**/*.ts", "presets/*/tests/**/*.ts", "vitest.config.ts", "eslint.config.js"]
 }
