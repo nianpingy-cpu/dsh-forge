@@ -924,9 +924,9 @@ export const ffmpegPlugin: {
 } = {
   metadata: {
     name: "@dsh-forge/plugin-ffmpeg",
-    version: "0.2.0",
+    version: "0.3.0",
     upstreamTool: "ffmpeg",
-    coreContractVersion: "0.2.0",
+    coreContractVersion: "0.3.0",
     capabilities: [
       "probe",
       "clip",

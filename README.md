@@ -22,7 +22,7 @@ Fix / Retry / Verify
 
 ## Status
 
-**V0.2.0** — published (tag `v0.2.0`). See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+**V0.3.0** — published (tag `v0.3.0`). See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Principles
 

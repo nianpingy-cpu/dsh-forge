@@ -1,8 +1,8 @@
 # PROJECT_STATUS
 
-Current Version: 0.2.0 (V0.2.0 published — tag v0.2.0)
-Current Milestone: V0.3.0
-Current Issue: ISSUE-019 MERGED — V0.2.0 release (security + devops presets)
+Current Version: 0.3.0 (V0.3.0 published — tag v0.3.0)
+Current Milestone: V1.0.0
+Current Issue: ISSUE-026 MERGED — V0.3.0 release
 Current Branch: V0.1.0/issue-009-ast-grep-read-adapter (chain tip)
 
 ## Completed (merged + closed with evidence)
@@ -34,6 +34,9 @@ Current Branch: V0.1.0/issue-009-ast-grep-read-adapter (chain tip)
 - ISSUE-025 Full E2E suite (PR #53, five stories)
 - **ISSUE-019 V0.2.0 release** (PR #54): presets security + devops, version
   0.2.0 bump across all packages, tag v0.2.0 + GitHub Release
+- ISSUE-024 Presets full set (PR #55, media + full presets)
+- **ISSUE-026 V0.3.0 release** (PR #56): version 0.3.0 bump, full suite green,
+  tag v0.3.0 + GitHub Release
 
 ## Plugins implemented (10)
 
@@ -43,8 +46,6 @@ ast-grep · Ruff · Biome · uv · act · Semgrep · Trivy · Docker · k6 · FF
 
 ## Open Issues (in dependency order)
 
-- ISSUE-024 Presets full set (coding/python/web/security/devops/media/full)
-- ISSUE-026 V0.3.0 release
 - ISSUE-027 DeepSeek Harness compatibility matrix (Pinned + Latest lanes)
 - ISSUE-028 Documentation and examples
 - ISSUE-029 Supply chain and release hardening

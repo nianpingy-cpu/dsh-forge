@@ -1,6 +1,6 @@
 {
   "name": "@dsh-forge/plugin-quality-gate",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Quality/security gate: orchestrate Ruff/Biome + Semgrep + Trivy lanes into a PASS / PASS_WITH_WARNINGS / FAIL verdict (orchestration only)",
   "license": "MIT",
   "type": "module",
