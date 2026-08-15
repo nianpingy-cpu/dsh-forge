@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@dsh-forge/core",
   "version": "0.2.0",
   "description": "Core SDK for dsh-forge plugins: process runner, diagnostics, workspace policy, contract test kit",

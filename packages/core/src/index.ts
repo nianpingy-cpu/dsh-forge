@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Semantic version of the @dsh-forge/core package.
  *
  * Plugins should report this version in their compatibility metadata so the

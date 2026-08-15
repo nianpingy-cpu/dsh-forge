@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@dsh-forge/plugin-biome",
   "version": "0.2.0",
   "description": "Biome tools for DeepSeek Harness: check, lint, format check, fix, format (JS/TS/JSX/TSX/JSON)",

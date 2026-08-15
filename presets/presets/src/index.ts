@@ -1,5 +1,5 @@
-﻿/**
- * Plugin presets (ISSUE-013 / ISSUE-024) 鈥?composition and configuration
+/**
+ * Plugin presets (ISSUE-013 / ISSUE-024) — composition and configuration
  * only. A preset is a manifest that references already-implemented plugin
  * packages; no plugin code is duplicated here. The harness host can load a
  * preset and register every plugin/tool it references.

@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@dsh-forge/plugin-uv",
   "version": "0.2.0",
   "description": "uv tools for DeepSeek Harness: project status, python find, sync, tree, run, add, remove",

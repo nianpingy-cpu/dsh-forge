@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@dsh-forge/plugin-ruff",
   "version": "0.2.0",
   "description": "Ruff tools for DeepSeek Harness: lint check, format check, rule explain, fix, format",

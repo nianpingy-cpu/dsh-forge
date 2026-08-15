@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -148,7 +148,7 @@ function realProbeTool(): ToolDefinition {
   };
 }
 
-/** A stub that returns BinaryNotFound WITHOUT ever invoking ctx.run 鈥?this is
+/** A stub that returns BinaryNotFound WITHOUT ever invoking ctx.run — this is
  * not real binary detection and must be rejected by the kit. */
 function stubBinaryTool(): ToolDefinition {
   return {
@@ -413,7 +413,7 @@ describe("runContractSuite", () => {
   it("passes binary-missing check for a real tool via the injected mock runner", async () => {
     // A realistic tool that runs an installed binary and maps BinaryNotFound
     // must pass when the kit injects a mock runner simulating a missing
-    // binary 鈥?the check must not be limited to synthetic nonexistent-binary
+    // binary — the check must not be limited to synthetic nonexistent-binary
     // fixtures.
     const plugin: Plugin = {
       metadata: { ...goodPlugin().metadata },

@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@dsh-forge/plugin-act",
   "version": "0.2.0",
   "description": "act tools for DeepSeek Harness: list workflows, list jobs, dry-run, run, run job, failure summary (GitHub Actions local runner)",

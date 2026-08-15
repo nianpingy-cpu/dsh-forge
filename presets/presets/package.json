@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@dsh-forge/presets",
   "version": "0.2.0",
   "description": "Composable plugin presets for DeepSeek Harness (composition/config only; no plugin code duplication)",
