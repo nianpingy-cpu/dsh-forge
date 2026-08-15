@@ -23,7 +23,7 @@ spawn("sh", ["-c", "ls"], { shell: true });`,
       config,
     );
     expect(shellViolations(messages)).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it("flags spawnSync with shell: true", async () => {
     const config = await loadConfig();

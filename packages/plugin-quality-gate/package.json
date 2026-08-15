@@ -1,0 +1,26 @@
+{
+  "name": "@dsh-forge/plugin-quality-gate",
+  "version": "0.1.0",
+  "description": "Quality/security gate: orchestrate Ruff/Biome + Semgrep + Trivy lanes into a PASS / PASS_WITH_WARNINGS / FAIL verdict (orchestration only)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean"
+  },
+  "dependencies": {
+    "@dsh-forge/core": "workspace:*",
+    "@dsh-forge/plugin-biome": "workspace:*",
+    "@dsh-forge/plugin-ruff": "workspace:*",
+    "@dsh-forge/plugin-semgrep": "workspace:*",
+    "@dsh-forge/plugin-trivy": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0"
+  }
+}
