@@ -413,10 +413,13 @@ describe("tool-specific validation", () => {
     expect(probed.error?.message).toMatch(/manifest|playlist/i);
 
     // A renamed manifest (media extension) with padding before <MPD is caught
-    // by the 32 KiB probe-buffer scan too.
+    // by the probe-window scan. 128 KiB of leading junk exceeds the old 32 KiB
+    // head read but is inside the 8 MiB window (>= ffmpeg's 5,000,000-byte
+    // default probesize), so ffmpeg's dash demuxer could still detect <MPD —
+    // the guard must reject it.
     writeFileSync(
       join(workspaceRoot, "photo.mp4"),
-      "<!-- " + "x".repeat(3000) + " -->\n<MPD><BaseURL>file:///tmp/secret.mp4</BaseURL></MPD>",
+      "<!-- " + "x".repeat(128 * 1024) + " -->\n<MPD><BaseURL>file:///tmp/secret.mp4</BaseURL></MPD>",
       "utf8",
     );
     const transcode = () =>
@@ -428,6 +431,28 @@ describe("tool-specific validation", () => {
     expect(written.ok).toBe(false);
     expect(written.error?.code).toBe("InvalidArguments");
     expect(written.error?.message).toMatch(/manifest|playlist/i);
+  });
+
+  it("rejects a non-regular input (FIFO) without blocking the main thread (POSIX)", async () => {
+    // A planted FIFO (mkfifo) would block a synchronous open/read on the Node
+    // main thread indefinitely; the tool timeout only bounds the child. The
+    // guard must stat (never blocking) and reject before opening. POSIX-only:
+    // Windows has no mkfifo.
+    if (process.platform === "win32") return;
+    const { execFileSync } = await import("node:child_process");
+    const fifo = join(workspaceRoot, "photo.mp4");
+    try {
+      execFileSync("mkfifo", [fifo]);
+    } catch {
+      return; // mkfifo unavailable — nothing to test
+    }
+    const probe = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "media_probe")!;
+    // Would hang forever if the guard opened the FIFO; must return promptly.
+    const probed = await probe().execute({ input: "photo.mp4" }, ctx(mockRunner()));
+    expect(probed.ok).toBe(false);
+    expect(probed.error?.code).toBe("InvalidArguments");
+    expect(probed.error?.message).toMatch(/regular file/i);
   });
 
   it("does not rewrite backslashes into traversal in the concat list (POSIX)", async () => {

@@ -37,6 +37,7 @@ import {
   openSync,
   readSync,
   closeSync,
+  statSync,
 } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
@@ -226,10 +227,10 @@ function isPlaylistPath(p: string): boolean {
 
 /**
  * Dereferencing manifest markers that ffmpeg auto-detects by content
- * (av_stristr substring scan over its ~32 KiB probe buffer): HLS (#EXTM3U /
- * #EXTINF), DASH MPD and Smooth Streaming. Detection must match ffmpeg's own
- * scan (bare substring anywhere in the head, case-insensitive), so a renamed
- * or padded manifest is caught regardless of a leading DOCTYPE/comment.
+ * (av_stristr substring scan over its probe buffer): HLS (#EXTM3U / #EXTINF),
+ * DASH MPD and Smooth Streaming. Detection must match ffmpeg's own scan (bare
+ * substring anywhere in the head, case-insensitive), so a renamed or padded
+ * manifest is caught regardless of a leading DOCTYPE/comment.
  */
 const MANIFEST_MARKERS = [
   "#extm3u",
@@ -238,19 +239,36 @@ const MANIFEST_MARKERS = [
   "<smoothstreamingmedia",
 ] as const;
 
-const PROBE_BUFFER_BYTES = 32 * 1024; // ffmpeg's probe buffer size
+/**
+ * ffmpeg's default probe buffer is 5,000,000 bytes; the guard scans that whole
+ * window with margin (8 MiB) so a manifest marker anywhere ffmpeg would
+ * auto-detect it is caught. Every ffmpeg/ffprobe invocation also clamps
+ * -probesize to this window, so ffmpeg can never scan further than the guard.
+ */
+const PROBE_WINDOW_BYTES = 8 * 1024 * 1024; // 8 MiB >= ffmpeg's 5,000,000 B default
+const PROBE_WINDOW = "8M"; // ffmpeg -probesize value matching PROBE_WINDOW_BYTES
 
 /**
  * True when the file's leading bytes contain a dereferencing manifest marker
  * anywhere (ffmpeg auto-detects HLS/DASH/Smooth by content, not extension, so
  * a renamed manifest would still dereference external files). This bounded
  * head read mirrors ffmpeg's probe scan without loading a large media file.
+ *
+ * Only regular files are scanned: a FIFO/pipe/socket/device would block the
+ * synchronous open/read on the Node main thread (unkillable harness DoS), so
+ * stat() (which never blocks on a FIFO) gates the open.
  */
 function hasPlaylistSignature(absolute: string): boolean {
+  try {
+    if (!statSync(absolute).isFile()) return false;
+  } catch {
+    // missing/unreadable input — let ffmpeg report it
+    return false;
+  }
   let fd: number | undefined;
   try {
     fd = openSync(absolute, "r");
-    const buf = Buffer.alloc(PROBE_BUFFER_BYTES);
+    const buf = Buffer.alloc(PROBE_WINDOW_BYTES);
     const n = readSync(fd, buf, 0, buf.length, 0);
     const head = buf.subarray(0, n).toString("utf8").toLowerCase();
     return MANIFEST_MARKERS.some((m) => head.includes(m));
@@ -281,6 +299,25 @@ function resolveInput(
   }
   try {
     const absolute = resolveInWorkspace(ctx.workspaceRoot, path);
+    // A FIFO/pipe/socket/device input would block a synchronous open/read on
+    // the Node main thread (unkillable harness DoS — the tool timeout only
+    // bounds the child process) and a directory cannot be probed. stat() never
+    // blocks on a FIFO, so non-regular inputs are rejected before any open.
+    // Missing files are left for ffmpeg to report.
+    let inputStat: ReturnType<typeof statSync> | undefined;
+    try {
+      inputStat = statSync(absolute);
+    } catch {
+      inputStat = undefined;
+    }
+    if (inputStat !== undefined && !inputStat.isFile()) {
+      return {
+        ok: false,
+        result: invalid(
+          "input must be a regular file (FIFOs, sockets, devices and directories are not supported)",
+        ),
+      };
+    }
     // Playlist containers (HLS/m3u) dereference external file/URL references
     // inside the playlist. With -protocol_whitelist file,pipe,fd a workspace
     // .m3u8 makes the demuxer read arbitrary local media (boundary bypass for
@@ -409,9 +446,13 @@ const mediaProbe: ToolDefinition = {
         // Local `file://` references inside a hostile playlist remain readable
         // by the harness user — a documented residual risk for untrusted media
         // (ffmpeg's HLS demuxer additionally restricts segment extensions by
-        // default).
+        // default). -probesize clamps ffmpeg's auto-detection window to the
+        // guard window (PROBE_WINDOW_BYTES), so a manifest marker beyond it is
+        // never dereferenced.
         "-protocol_whitelist",
         "file,pipe,fd",
+        "-probesize",
+        PROBE_WINDOW,
         "-v",
         "error",
         "-print_format",
@@ -525,12 +566,23 @@ async function runWrite(
   // so the first non-empty stderr line on failure is the real error (not the
   // banner). -protocol_whitelist file,pipe,fd blocks network protocols (SSRF);
   // local file:// references inside hostile playlists remain readable by the
-  // harness user (documented residual risk).
+  // harness user (documented residual risk). -probesize clamps ffmpeg's
+  // auto-detection window to the guard window (PROBE_WINDOW_BYTES), so a
+  // manifest marker beyond it is never dereferenced.
   const run = await runBinary(
     ctx,
     resolveFfmpegBinary(),
     FFMPEG_BINARY_HINT,
-    ["-hide_banner", "-v", "error", "-protocol_whitelist", "file,pipe,fd", ...argv],
+    [
+      "-hide_banner",
+      "-v",
+      "error",
+      "-protocol_whitelist",
+      "file,pipe,fd",
+      "-probesize",
+      PROBE_WINDOW,
+      ...argv,
+    ],
   );
   if (!run.ok) return run.result;
   if (run.exec.exitCode !== 0) {
@@ -691,6 +743,8 @@ const videoConcat: ToolDefinition = {
           "error",
           "-protocol_whitelist",
           "file,pipe,fd",
+          "-probesize",
+          PROBE_WINDOW,
           overwriteFlag(overwrite),
           "-f",
           "concat",
