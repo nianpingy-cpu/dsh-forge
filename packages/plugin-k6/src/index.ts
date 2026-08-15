@@ -176,6 +176,42 @@ function okResult(summary: string, raw: string): ToolResult {
   };
 }
 
+/** Parse a k6 duration like "30s"/"5m"/"1h" into milliseconds (NaN if invalid). */
+function durationMs(d: string): number {
+  const m = /^(\d+)(ms|s|m|h)$/.exec(d.trim());
+  if (!m) return NaN;
+  const n = Number(m[1]);
+  switch (m[2]) {
+    case "ms":
+      return n;
+    case "s":
+      return n * 1000;
+    case "m":
+      return n * 60_000;
+    case "h":
+      return n * 3_600_000;
+    default:
+      return NaN;
+  }
+}
+
+/**
+ * Scale the process timeout with the requested test duration so a long test
+ * window (e.g. k6_stress's 5m default) is never killed by a fixed short
+ * timeout. Adds a 90s margin for k6 startup + summary shutdown, capped at 30
+ * minutes. Falls back to `fallbackMs` when no parseable duration is given
+ * (a script-defined duration is unknown).
+ */
+function runTimeout(duration: string | undefined, fallbackMs: number): number {
+  if (duration !== undefined) {
+    const ms = durationMs(duration);
+    if (Number.isFinite(ms)) {
+      return Math.min(ms + 90_000, 30 * 60_000);
+    }
+  }
+  return fallbackMs;
+}
+
 /** Resolve a workspace-relative script path; never throws. */
 function resolveScript(
   ctx: ToolContext,
@@ -387,7 +423,11 @@ const k6Run: ToolDefinition = {
       ...(vus !== undefined ? ["--vus", String(vus)] : []),
       ...(duration !== undefined ? ["--duration", duration.trim()] : []),
     ];
-    const run = await runK6(ctx, argv);
+    const run = await runK6(ctx, argv, {
+      // Scale with an explicit duration; a script-defined duration is
+      // unknown, so fall back to a generous 15-minute cap.
+      timeoutMs: runTimeout(duration?.trim(), 900_000),
+    });
     if (!run.ok) return run.result;
     return k6RunResult(run);
   },
@@ -425,7 +465,11 @@ const k6Smoke: ToolDefinition = {
     if (!isValidDuration(d)) {
       return invalid("duration must be a positive value with a unit, e.g. 30s, 1m");
     }
-    const run = await runK6(ctx, ["run", resolved.absolute, "--vus", "1", "--duration", d.trim()]);
+    const run = await runK6(
+      ctx,
+      ["run", resolved.absolute, "--vus", "1", "--duration", d.trim()],
+      { timeoutMs: runTimeout(d, 300_000) },
+    );
     if (!run.ok) return run.result;
     return k6RunResult(run);
   },
@@ -462,7 +506,11 @@ const k6Load: ToolDefinition = {
     if (!Number.isInteger(v) || v <= 0) return invalid("vus must be a positive integer");
     const d = duration ?? "2m";
     if (!isValidDuration(d)) return invalid("duration must be a positive value with a unit");
-    const run = await runK6(ctx, ["run", resolved.absolute, "--vus", String(v), "--duration", d.trim()]);
+    const run = await runK6(
+      ctx,
+      ["run", resolved.absolute, "--vus", String(v), "--duration", d.trim()],
+      { timeoutMs: runTimeout(d, 300_000) },
+    );
     if (!run.ok) return run.result;
     return k6RunResult(run);
   },
@@ -499,7 +547,11 @@ const k6Stress: ToolDefinition = {
     if (!Number.isInteger(v) || v <= 0) return invalid("vus must be a positive integer");
     const d = duration ?? "5m";
     if (!isValidDuration(d)) return invalid("duration must be a positive value with a unit");
-    const run = await runK6(ctx, ["run", resolved.absolute, "--vus", String(v), "--duration", d.trim()]);
+    const run = await runK6(
+      ctx,
+      ["run", resolved.absolute, "--vus", String(v), "--duration", d.trim()],
+      { timeoutMs: runTimeout(d, 300_000) },
+    );
     if (!run.ok) return run.result;
     return k6RunResult(run);
   },

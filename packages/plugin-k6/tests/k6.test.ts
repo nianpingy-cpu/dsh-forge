@@ -230,6 +230,21 @@ describe("k6_run (process)", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("WorkspaceViolation");
   });
+
+  it("caps an explicit long duration timeout at 30 minutes", async () => {
+    let captured: ExecutionRequest | undefined;
+    const capture: ExecutionRunner = async (req) => {
+      captured = req;
+      return { exitCode: 0, stdout: RUN_OUTPUT, stderr: "", ...OK };
+    };
+    const result = await tool().execute(
+      { script: "script.js", duration: "1h" },
+      ctx(capture),
+    );
+    expect(result.ok).toBe(true);
+    expect(captured).toBeTruthy();
+    expect(captured!.timeoutMs).toBe(30 * 60_000);
+  });
 });
 
 describe("k6_smoke (process)", () => {
@@ -299,6 +314,18 @@ describe("k6_stress (process)", () => {
     expect(captured).toBeTruthy();
     expect(captured!.args).toContain("--vus");
     expect(captured!.args).toContain("200");
+  });
+
+  it("scales the timeout with the test duration (5m stress is not killed at 300s)", async () => {
+    let captured: ExecutionRequest | undefined;
+    const capture: ExecutionRunner = async (req) => {
+      captured = req;
+      return { exitCode: 0, stdout: RUN_OUTPUT, stderr: "", ...OK };
+    };
+    const result = await tool().execute({ script: "script.js" }, ctx(capture));
+    expect(result.ok).toBe(true);
+    expect(captured).toBeTruthy();
+    expect(captured!.timeoutMs!).toBeGreaterThan(300_000);
   });
 
   it("denies without permission approval (process)", async () => {
