@@ -729,9 +729,9 @@ export const dockerPlugin: {
 } = {
   metadata: {
     name: "@dsh-forge/plugin-docker",
-    version: "0.2.0",
+    version: "0.3.0",
     upstreamTool: "docker",
-    coreContractVersion: "0.2.0",
+    coreContractVersion: "0.3.0",
     capabilities: [
       "status",
       "ps",

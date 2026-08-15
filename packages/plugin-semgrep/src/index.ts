@@ -527,9 +527,9 @@ export const semgrepPlugin: {
 } = {
   metadata: {
     name: "@dsh-forge/plugin-semgrep",
-    version: "0.2.0",
+    version: "0.3.0",
     upstreamTool: "semgrep",
-    coreContractVersion: "0.2.0",
+    coreContractVersion: "0.3.0",
     capabilities: [
       "scan",
       "scan-file",
