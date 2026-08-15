@@ -341,6 +341,32 @@ describe("tool-specific validation", () => {
     expect(result.error?.code).toBe("InvalidArguments");
   });
 
+  it("rejects playlist containers (.m3u8/.m3u) on the read tool (no boundary bypass)", async () => {
+    writeFileSync(join(workspaceRoot, "evil.m3u8"), "#EXTM3U", "utf8");
+    const probe = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "media_probe")!;
+    const result = await probe().execute(
+      { input: "evil.m3u8" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+    expect(result.error?.message).toMatch(/playlist/i);
+  });
+
+  it("rejects playlist containers on write tools (no confused deputy)", async () => {
+    writeFileSync(join(workspaceRoot, "evil.m3u"), "#EXTM3U", "utf8");
+    const transcode = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "video_transcode")!;
+    const result = await transcode().execute(
+      { input: "evil.m3u", output: "o.wav" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+    expect(result.error?.message).toMatch(/playlist/i);
+  });
+
   it("does not rewrite backslashes into traversal in the concat list (POSIX)", async () => {
     if (process.platform === "win32") return; // Windows resolves \\ differently
     let listContent = "";

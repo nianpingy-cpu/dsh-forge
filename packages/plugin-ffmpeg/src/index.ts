@@ -216,6 +216,11 @@ async function runBinary(
   return { ok: true, exec: { ...exec, exitCode: exec.exitCode } };
 }
 
+/** Reject playlist containers (HLS/m3u) that dereference external files. */
+function isPlaylistPath(p: string): boolean {
+  return /\.(m3u8?|m3u)$/i.test(p);
+}
+
 /** Resolve a workspace-relative input path; never throws. */
 function resolveInput(
   ctx: ToolContext,
@@ -228,7 +233,21 @@ function resolveInput(
     };
   }
   try {
-    return { ok: true, absolute: resolveInWorkspace(ctx.workspaceRoot, path) };
+    const absolute = resolveInWorkspace(ctx.workspaceRoot, path);
+    // Playlist containers (HLS/m3u) dereference external file/URL references
+    // inside the playlist. With -protocol_whitelist file,pipe,fd a workspace
+    // .m3u8 makes the demuxer read arbitrary local media (boundary bypass for
+    // the read tool, confused-deputy copy-into-workspace for the write tools),
+    // so they are rejected outright.
+    if (isPlaylistPath(absolute)) {
+      return {
+        ok: false,
+        result: invalid(
+          "playlist containers (.m3u8/.m3u) are not supported: they dereference external files",
+        ),
+      };
+    }
+    return { ok: true, absolute };
   } catch (err) {
     if (err instanceof WorkspaceViolationError) {
       return {
@@ -315,7 +334,7 @@ function overwriteFlag(overwrite: boolean): string {
 const mediaProbe: ToolDefinition = {
   name: "media_probe",
   description:
-    "Probe a media file with ffprobe and report format + stream metadata (read-only). Network protocols are blocked; probing untrusted playlist media (e.g. m3u8) may still read locally referenced files.",  mutationClass: "read",
+    "Probe a media file with ffprobe and report format + stream metadata (read-only). Playlist containers (.m3u8/.m3u) are rejected because they dereference external files.",  mutationClass: "read",
   inputSchema: {
     type: "object",
     properties: {
