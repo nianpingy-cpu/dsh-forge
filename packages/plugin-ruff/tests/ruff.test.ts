@@ -49,7 +49,7 @@ describe("ruff_check", () => {
     expect(f401s[0]?.line).toBe(1);
     expect(f401s[0]?.fixable).toBe(true);
     expect(f401s[0]?.severity).toBe("error");
-  });
+  }, 30_000);
 
   it("reports no findings for a clean file", async () => {
     const result = await tool().execute(

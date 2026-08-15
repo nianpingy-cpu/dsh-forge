@@ -29,7 +29,7 @@ import {
   type Diagnostic,
   type Severity,
 } from "@dsh-forge/core";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveTrivyBinary, TRIVY_BINARY_HINT } from "./binary.js";
@@ -151,49 +151,56 @@ async function runTrivy(
   // are always absolute (or remote URLs), so the neutral cwd does not affect
   // what is scanned.
   const runtime = mkdtempSync(join(tmpdir(), "dsh-trivy-runtime-"));
-  const execution = await ctx.run({
-    binary,
-    args: [...args],
-    cwd: runtime,
-    timeoutMs: 300_000,
-    maxOutputBytes: 20 * 1024 * 1024,
-  });
-  if (execution.error?.code === "BinaryNotFound") {
-    return { ok: false, result: binaryNotFound(binary) };
-  }
-  if (execution.timedOut || execution.aborted) {
-    return {
-      ok: false,
-      result: {
+  try {
+    const execution = await ctx.run({
+      binary,
+      args: [...args],
+      cwd: runtime,
+      timeoutMs: 300_000,
+      maxOutputBytes: 20 * 1024 * 1024,
+    });
+    if (execution.error?.code === "BinaryNotFound") {
+      return { ok: false, result: binaryNotFound(binary) };
+    }
+    if (execution.timedOut || execution.aborted) {
+      return {
         ok: false,
-        summary: "trivy timed out",
-        error: { code: "Timeout", message: "trivy exceeded the 300000ms timeout" },
-      },
-    };
-  }
-  if (execution.truncated) {
-    return {
-      ok: false,
-      result: {
-        ok: false,
-        summary: "trivy output exceeded the output cap",
-        error: {
-          code: "ToolFailure",
-          message:
-            "trivy output exceeded the 20 MiB output cap; the result was truncated",
+        result: {
+          ok: false,
+          summary: "trivy timed out",
+          error: { code: "Timeout", message: "trivy exceeded the 300000ms timeout" },
         },
-      },
+      };
+    }
+    if (execution.truncated) {
+      return {
+        ok: false,
+        result: {
+          ok: false,
+          summary: "trivy output exceeded the output cap",
+          error: {
+            code: "ToolFailure",
+            message:
+              "trivy output exceeded the 20 MiB output cap; the result was truncated",
+          },
+        },
+      };
+    }
+    if (execution.error) {
+      return { ok: false, result: toolFailure(execution.error.message) };
+    }
+    return {
+      ok: true,
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      exitCode: execution.exitCode ?? 0,
     };
+  } finally {
+    // The runtime dir is a private scratch cwd (trivy must not read a
+    // repo-planted .trivyignore); always remove it so repeated scans do not
+    // accumulate empty temp directories in the OS temp.
+    rmSync(runtime, { recursive: true, force: true });
   }
-  if (execution.error) {
-    return { ok: false, result: toolFailure(execution.error.message) };
-  }
-  return {
-    ok: true,
-    stdout: execution.stdout,
-    stderr: execution.stderr,
-    exitCode: execution.exitCode ?? 0,
-  };
 }
 
 interface TrivyReport {
@@ -304,20 +311,33 @@ function parseReport(run: {
   return { ok: true, report: data as unknown as TrivyReport };
 }
 
+/**
+ * Cap on the number of Diagnostics materialized per scan. A 20 MiB report can
+ * hold tens of thousands of findings; materializing all of them per call is a
+ * resource-exhaustion surface (trivy_secret_scan is un-gated). The model gets
+ * the capped set plus the per-class summary and a raw truncation.
+ */
+const MAX_DIAGNOSTICS = 1000;
+
 /** Convert trivy findings of one class into Diagnostics with a type tag. */
 function findingsToDiagnostics(
   workspaceRoot: string,
   results: TrivyResult[],
   type: "vulnerability" | "misconfiguration" | "secret" | "license",
-): Diagnostic[] {
-  const out: Diagnostic[] = [];
+): { diagnostics: Diagnostic[]; total: number } {
+  const diagnostics: Diagnostic[] = [];
+  let total = 0;
+  const push = (d: Diagnostic): void => {
+    total++;
+    if (diagnostics.length < MAX_DIAGNOSTICS) diagnostics.push(d);
+  };
   for (const r of results) {
     const file = toRelativeFile(
       workspaceRoot,
       str(r.Target),
     );
     for (const v of r.Vulnerabilities ?? []) {
-      out.push(
+      push(
         toDiagnostic(TOOL, {
           severity: trivySeverity(v.Severity),
           rule: str(v.VulnerabilityID)
@@ -333,7 +353,7 @@ function findingsToDiagnostics(
       );
     }
     for (const m of r.Misconfigurations ?? []) {
-      out.push(
+      push(
         toDiagnostic(TOOL, {
           severity: trivySeverity(m.Severity),
           rule: str(m.ID) ? `misconfig:${str(m.ID)}` : `misconfig:${type}`,
@@ -348,7 +368,7 @@ function findingsToDiagnostics(
       );
     }
     for (const s of r.Secrets ?? []) {
-      out.push(
+      push(
         toDiagnostic(TOOL, {
           severity: trivySeverity(s.Severity),
           rule: str(s.RuleID) ? `secret:${str(s.RuleID)}` : `secret:${type}`,
@@ -362,7 +382,7 @@ function findingsToDiagnostics(
       );
     }
     for (const l of r.Licenses ?? []) {
-      out.push(
+      push(
         toDiagnostic(TOOL, {
           severity: trivySeverity(l.Severity),
           rule: str(l.Name) ? `license:${str(l.Name)}` : `license:${type}`,
@@ -374,7 +394,7 @@ function findingsToDiagnostics(
       );
     }
   }
-  return out;
+  return { diagnostics, total };
 }
 
 /**
@@ -467,11 +487,12 @@ function reportResult(
   // string (a strict re-parse divergence must not fall back to emitting
   // unredacted plaintext secrets). Raw is rebuilt from the redacted object.
   const changed = redactReportObject(parsed.report);
-  const diagnostics = findingsToDiagnostics(
+  const { diagnostics, total } = findingsToDiagnostics(
     workspaceRoot,
     parsed.report.Results ?? [],
     type,
   );
+  const capped = total > diagnostics.length;
   const includeRaw = opts?.includeRaw ?? true;
   const safeRaw = redactCredentials(
     changed ? JSON.stringify(parsed.report) : run.stdout,
@@ -479,8 +500,10 @@ function reportResult(
   return {
     ok: true,
     summary:
-      diagnostics.length > 0
-        ? summaryFromDiagnostics(diagnostics)
+      total > 0
+        ? capped
+          ? `${total} finding(s) (first ${diagnostics.length} shown)`
+          : summaryFromDiagnostics(diagnostics)
         : okSummary,
     diagnostics,
     summaryBlock:
@@ -509,19 +532,22 @@ function sbomResult(
   const parsed = parseReport(run);
   if (!parsed.ok) return parsed.result;
   const changed = redactReportObject(parsed.report);
-  const diagnostics = findingsToDiagnostics(
+  const { diagnostics, total } = findingsToDiagnostics(
     workspaceRoot,
     parsed.report.Results ?? [],
     "license",
   );
+  const capped = total > diagnostics.length;
   const safeRaw = redactCredentials(
     changed ? JSON.stringify(parsed.report) : run.stdout,
   );
   return {
     ok: true,
     summary:
-      diagnostics.length > 0
-        ? summaryFromDiagnostics(diagnostics)
+      total > 0
+        ? capped
+          ? `${total} finding(s) (first ${diagnostics.length} shown)`
+          : summaryFromDiagnostics(diagnostics)
         : "no sbom findings",
     diagnostics,
     summaryBlock:

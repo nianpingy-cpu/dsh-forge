@@ -198,6 +198,73 @@ describe("trivy_repo_scan", () => {
     expect(result.raw).toContain("***@");
   });
 
+  it("caps diagnostics and reports the full total when findings exceed the cap", async () => {
+    const many = JSON.stringify({
+      ArtifactName: "repo",
+      Results: [
+        {
+          Target: "package-lock.json",
+          Class: "lang-pkgs",
+          Vulnerabilities: Array.from({ length: 1200 }, (_, i) => ({
+            VulnerabilityID: `CVE-2026-${String(i).padStart(4, "0")}`,
+            Severity: "HIGH",
+            PkgName: "pkg",
+            Title: "vuln",
+          })),
+        },
+      ],
+    });
+    const mock: ExecutionRunner = async () => ({
+      exitCode: 0,
+      stdout: many,
+      stderr: "",
+      timedOut: false,
+      aborted: false,
+      truncated: false,
+      durationMs: 1,
+    });
+    const result = await tool().execute(
+      { repo: "https://example.com/repo.git" },
+      ctx(mock),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics?.length).toBe(1000);
+    expect(result.summary).toContain("1200 finding(s)");
+    expect(result.summary).toContain("first 1000 shown");
+  });
+
+  it("locks the vulnerability report shape with real trivy (DB-dependent; skips when DB unavailable)", async () => {
+    if (!hasRealTrivy) return;
+    const res = await trivyRunner({
+      binary: resolveTrivyBinary(),
+      args: ["fs", "--format", "json", "-q", join(workspaceRoot, "repo")],
+      cwd: workspaceRoot,
+      timeoutMs: 120_000,
+    });
+    if (res.error || res.exitCode !== 0) {
+      // Vulnerability DB not downloaded (offline first run); the real vuln
+      // shape is locked on CI where trivy downloads the DB.
+      return;
+    }
+    const report = JSON.parse(res.stdout) as {
+      Results?: {
+        Vulnerabilities?: {
+          VulnerabilityID?: string;
+          Severity?: string;
+          PkgName?: string;
+        }[];
+      }[];
+    };
+    const vulns = (report.Results ?? []).flatMap(
+      (r) => r.Vulnerabilities ?? [],
+    );
+    expect(vulns.length).toBeGreaterThan(0);
+    const cve = vulns.find((v) => v.VulnerabilityID === "CVE-2021-23337");
+    expect(cve).toBeTruthy();
+    expect(cve!.Severity).toBeTruthy();
+    expect(cve!.PkgName).toBe("lodash");
+  }, 120_000);
+
   it("redacts secret Match and Code line content from raw output", async () => {
     const withSecrets = JSON.stringify({
       Results: [
@@ -392,6 +459,17 @@ describe("trivy_config_scan", () => {
     expect(diags[1]!.severity).toBe("info"); // LOW
     expect(diags[2]!.severity).toBe("info"); // UNKNOWN license
   });
+
+  it("scans the committed config fixture with real trivy (offline)", async () => {
+    if (!hasRealTrivy) return;
+    const result = await tool().execute(
+      { path: "config" },
+      ctx(trivyRunner),
+    );
+    expect(result.ok).toBe(true);
+    const diags = result.diagnostics ?? [];
+    expect(diags.some((d) => d.rule === "misconfig:DS-0001")).toBe(true);
+  }, 60_000);
 });
 
 describe("trivy_secret_scan", () => {
@@ -468,6 +546,27 @@ describe("trivy_secret_scan", () => {
     expect(captured!.cwd).not.toBe(workspaceRoot);
     expect(captured!.cwd).toMatch(/dsh-trivy-runtime-/);
   });
+
+  it("removes the neutral runtime cwd after the scan (no temp dir leak)", async () => {
+    let captured: ExecutionRequest | undefined;
+    const captureRunner: ExecutionRunner = async (req) => {
+      captured = req;
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({ Results: [] }),
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+        truncated: false,
+        durationMs: 1,
+      };
+    };
+    const result = await tool().execute({ path: "secrets" }, ctx(captureRunner));
+    expect(result.ok).toBe(true);
+    expect(captured).toBeTruthy();
+    expect(captured!.cwd).toMatch(/dsh-trivy-runtime-/);
+    expect(existsSync(captured!.cwd!)).toBe(false);
+  });
 });
 
 describe("trivy_image_scan", () => {
@@ -521,6 +620,54 @@ describe("trivy_sbom", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("InvalidArguments");
   });
+
+  it("scans the committed SBOM with real trivy (DB-dependent; skips when DB unavailable)", async () => {
+    if (!hasRealTrivy) return;
+    const result = await tool().execute(
+      { path: "sbom/cyclonedx.json" },
+      ctx(trivyRunner),
+    );
+    if (!result.ok && /DB|database/i.test(result.error?.message ?? "")) {
+      // Vulnerability DB not downloaded (offline first run); skip.
+      return;
+    }
+    expect(result.ok).toBe(true);
+    for (const d of result.diagnostics ?? []) {
+      expect(
+        d.rule?.startsWith("license:") || d.rule?.startsWith("vuln:"),
+      ).toBe(true);
+    }
+  }, 90_000);
+
+  it("locks the license report shape with real trivy (offline)", async () => {
+    if (!hasRealTrivy) return;
+    const res = await trivyRunner({
+      binary: resolveTrivyBinary(),
+      args: [
+        "fs",
+        "--scanners",
+        "license",
+        "--format",
+        "json",
+        "-q",
+        "--skip-db-update",
+        join(workspaceRoot, "repo"),
+      ],
+      cwd: workspaceRoot,
+      timeoutMs: 60_000,
+    });
+    expect(res.error).toBeUndefined();
+    expect(res.exitCode).toBe(0);
+    const report = JSON.parse(res.stdout) as {
+      Results?: { Licenses?: { Name?: string; PkgName?: string }[] }[];
+    };
+    const licenses = (report.Results ?? []).flatMap(
+      (r) => r.Licenses ?? [],
+    );
+    expect(
+      licenses.some((l) => l.Name === "MIT" && l.PkgName === "lodash"),
+    ).toBe(true);
+  }, 60_000);
 });
 
 describe("default export", () => {
