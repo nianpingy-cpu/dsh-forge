@@ -111,6 +111,16 @@ const ctx = (workspaceRoot: string, runner: ExecutionRunner): ToolContext => ({
   permission: { approved: true },
 });
 
+const ctxApproval = (
+  workspaceRoot: string,
+  runner: ExecutionRunner,
+  approved: boolean,
+): ToolContext => ({
+  workspaceRoot,
+  run: runner,
+  permission: { approved },
+});
+
 describe("quality_gate (ISSUE-018)", () => {
   it("PASSES a clean python project", async () => {
     const ws = makeWorkspace({ "src/app.py": "print('hi')\n" });
@@ -219,6 +229,25 @@ describe("quality_gate (ISSUE-018)", () => {
       expect(r.ok).toBe(true);
       expect(r.summary).toMatch(/FAIL/);
       expect((r.diagnostics ?? []).length).toBeLessThanOrEqual(1);
+    } finally {
+      cleanup(ws);
+    }
+  });
+
+  it("never certifies a clean PASS when a lane is denied by the host", async () => {
+    // Without network approval the Semgrep (network) lane is denied; the gate
+    // must not report a clean PASS even though the read lanes are clean.
+    const ws = makeWorkspace({ "src/app.py": "x = 1\n" });
+    try {
+      const r = await gate().execute(
+        { path: "src" },
+        ctxApproval(ws, mockRunner(), false),
+      );
+      expect(r.ok).toBe(true);
+      expect(r.summary).toMatch(/PASS_WITH_WARNINGS/);
+      expect(r.summary).not.toMatch(/quality gate: PASS\b/);
+      expect(r.raw).toMatch(/denied/i);
+      expect(r.raw).toContain("semgrep_security_scan");
     } finally {
       cleanup(ws);
     }

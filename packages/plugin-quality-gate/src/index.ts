@@ -16,10 +16,12 @@
  */
 import {
   validateArgs,
+  assertPermission,
   resolveInWorkspace,
   WorkspaceViolationError,
   summarizeDiagnostics,
   type Diagnostic,
+  type MutationClass,
   type Severity,
   type ToolDefinition,
   type ToolResult,
@@ -52,6 +54,14 @@ function binaryNotFound(message: string): ToolResult {
     ok: false,
     summary: "no quality tools available",
     error: { code: "BinaryNotFound", message },
+  };
+}
+
+function permissionDenied(message: string): ToolResult {
+  return {
+    ok: false,
+    summary: "quality gate denied",
+    error: { code: "PermissionDenied", message },
   };
 }
 
@@ -128,6 +138,8 @@ interface Lane {
   name: string;
   tool: ToolDefinition;
   args: unknown;
+  /** Permission class the gate must enforce (ADR-005 per-class gating). */
+  requiredClass: MutationClass;
 }
 
 const ruffCheck = ruffPlugin.tools.find((t) => t.name === "ruff_check")!;
@@ -142,14 +154,34 @@ const trivySecretScan = trivyPlugin.tools.find(
 function buildLanes(lang: ProjectLang, gateRel: string): Lane[] {
   const lanes: Lane[] = [];
   if (lang === "python") {
-    lanes.push({ name: "ruff_check", tool: ruffCheck, args: { paths: [gateRel] } });
+    lanes.push({
+      name: "ruff_check",
+      tool: ruffCheck,
+      args: { paths: [gateRel] },
+      requiredClass: "read",
+    });
   }
   if (lang === "web") {
-    lanes.push({ name: "biome_check", tool: biomeCheck, args: { paths: [gateRel] } });
+    lanes.push({
+      name: "biome_check",
+      tool: biomeCheck,
+      args: { paths: [gateRel] },
+      requiredClass: "read",
+    });
   }
   // Security lanes run for every project type.
-  lanes.push({ name: "trivy_secret_scan", tool: trivySecretScan, args: { path: gateRel } });
-  lanes.push({ name: "semgrep_security_scan", tool: semgrepSecurityScan, args: { path: gateRel } });
+  lanes.push({
+    name: "trivy_secret_scan",
+    tool: trivySecretScan,
+    args: { path: gateRel },
+    requiredClass: "read",
+  });
+  lanes.push({
+    name: "semgrep_security_scan",
+    tool: semgrepSecurityScan,
+    args: { path: gateRel },
+    requiredClass: "network",
+  });
   return lanes;
 }
 
@@ -177,28 +209,31 @@ function computeVerdict(
   diagnostics: readonly Diagnostic[],
   failOn: FailOn,
   laneErrors: number,
+  deniedLanes: number,
 ): { verdict: Verdict; counts: Record<Severity, number> } {
   const counts = countBySeverity(diagnostics);
   const errors = counts.error + counts.critical;
   const warnings = counts.warning;
   if (laneErrors > 0) return { verdict: "FAIL", counts };
+  let verdict: Verdict;
   if (failOn === "error") {
-    if (errors > 0) return { verdict: "FAIL", counts };
-    if (warnings > 0) return { verdict: "PASS_WITH_WARNINGS", counts };
-    return { verdict: "PASS", counts };
+    if (errors > 0) verdict = "FAIL";
+    else if (warnings > 0) verdict = "PASS_WITH_WARNINGS";
+    else verdict = "PASS";
+  } else if (failOn === "warning") {
+    verdict = errors + warnings > 0 ? "FAIL" : "PASS";
+  } else {
+    verdict = diagnostics.length > 0 ? "FAIL" : "PASS";
   }
-  if (failOn === "warning") {
-    if (errors + warnings > 0) return { verdict: "FAIL", counts };
-    return { verdict: "PASS", counts };
-  }
-  // failOn === "any"
-  if (diagnostics.length > 0) return { verdict: "FAIL", counts };
-  return { verdict: "PASS", counts };
+  // A denied lane means the gate could not certify that part of the story;
+  // it must never report a clean PASS (ADR-005 / false-certification guard).
+  if (verdict === "PASS" && deniedLanes > 0) verdict = "PASS_WITH_WARNINGS";
+  return { verdict, counts };
 }
 
 interface LaneOutcome {
   name: string;
-  status: "ok" | "skipped" | "error";
+  status: "ok" | "skipped" | "denied" | "error";
   findings: number;
   message?: string;
 }
@@ -208,7 +243,7 @@ interface LaneOutcome {
 const qualityGate: ToolDefinition = {
   name: "quality_gate",
   description:
-    "Detect the project (Python/JS/TS), run the matching lint lane (Ruff/Biome) plus security lanes (Semgrep audit, Trivy secrets) by composing the existing plugin tools, aggregate normalized diagnostics, and return a PASS / PASS_WITH_WARNINGS / FAIL verdict with configurable thresholds. Permission is enforced by each composed lane: read lanes (Ruff/Biome, Trivy secrets) always run; network lanes (Semgrep audit) require network approval and are skipped otherwise.",
+    "Detect the project (Python/JS/TS), run the matching lint lane (Ruff/Biome) plus security lanes (Semgrep audit, Trivy secrets) by composing the existing plugin tools, aggregate normalized diagnostics, and return a PASS / PASS_WITH_WARNINGS / FAIL verdict with configurable thresholds. Each lane's permission class is enforced by the gate against the host permission context (ADR-005): read lanes always run; the network lane (Semgrep audit) runs only when approved. Denied lanes are reported and a denied gate can never report a clean PASS.",
   mutationClass: "network",
   inputSchema: {
     type: "object",
@@ -271,24 +306,47 @@ const qualityGate: ToolDefinition = {
     const diagnostics: Diagnostic[] = [];
     const outcomes: LaneOutcome[] = [];
     let laneErrors = 0;
+    let deniedLanes = 0;
+    let missingLanes = 0;
     let ran = 0;
     for (const lane of lanes) {
+      // ADR-005 per-class gating is enforced here at the orchestrator
+      // boundary (not delegated to the composed tools), so the harness
+      // permission context gates every lane the gate runs.
+      if (
+        !assertPermission(
+          lane.requiredClass,
+          ctx.permission ?? { approved: false },
+        )
+      ) {
+        deniedLanes += 1;
+        outcomes.push({
+          name: lane.name,
+          status: "denied",
+          findings: 0,
+          message: `${lane.requiredClass} permission not approved`,
+        });
+        continue;
+      }
       const result = await lane.tool.execute.call(lane.tool, lane.args, ctx);
       if (result.ok) {
         ran += 1;
         const ds = result.diagnostics ?? [];
         diagnostics.push(...ds);
         outcomes.push({ name: lane.name, status: "ok", findings: ds.length });
-      } else if (
-        result.error?.code === "BinaryNotFound" ||
-        result.error?.code === "PermissionDenied"
-      ) {
-        // Binary not installed, or the lane's permission class was not
-        // approved: skip the lane (reported in the breakdown) — the other
-        // lanes still gate.
+      } else if (result.error?.code === "BinaryNotFound") {
+        missingLanes += 1;
         outcomes.push({
           name: lane.name,
           status: "skipped",
+          findings: 0,
+          message: result.error.message,
+        });
+      } else if (result.error?.code === "PermissionDenied") {
+        deniedLanes += 1;
+        outcomes.push({
+          name: lane.name,
+          status: "denied",
           findings: 0,
           message: result.error.message,
         });
@@ -305,8 +363,15 @@ const qualityGate: ToolDefinition = {
     }
 
     if (ran === 0) {
+      // Distinguish a permission block from missing tools: BinaryNotFound is
+      // factually wrong when the blocker is approval.
+      if (deniedLanes > 0 && missingLanes === 0) {
+        return permissionDenied(
+          "all quality lanes were denied: approval for their permission classes is required",
+        );
+      }
       return binaryNotFound(
-        "no quality tools available (Ruff/Biome, Semgrep, Trivy not installed or their permission classes not approved)",
+        "no quality tools available (Ruff/Biome, Semgrep, Trivy not installed or unusable)",
       );
     }
 
@@ -315,7 +380,12 @@ const qualityGate: ToolDefinition = {
     // the gate (only the returned diagnostics are capped for the model).
     const capped = diagnostics.slice(0, cap);
     const truncated = diagnostics.length > cap;
-    const { verdict, counts } = computeVerdict(diagnostics, threshold, laneErrors);
+    const { verdict, counts } = computeVerdict(
+      diagnostics,
+      threshold,
+      laneErrors,
+      deniedLanes,
+    );
 
     const laneSummary = outcomes
       .filter((o) => o.status !== "ok" || o.findings > 0)
@@ -330,6 +400,7 @@ const qualityGate: ToolDefinition = {
       `quality gate: ${verdict} — ${counts.error + counts.critical} error(s), ` +
       `${counts.warning} warning(s) across ${outcomes.length} lane(s)` +
       (laneErrors > 0 ? ` (${laneErrors} lane(s) failed to run)` : "") +
+      (deniedLanes > 0 ? ` (${deniedLanes} lane(s) denied)` : "") +
       (laneSummary ? ` [${laneSummary}]` : "");
 
     const raw = JSON.stringify(
