@@ -229,6 +229,9 @@ importers:
       '@dsh-forge/plugin-docker':
         specifier: workspace:*
         version: link:../../packages/plugin-docker
+      '@dsh-forge/plugin-ffmpeg':
+        specifier: workspace:*
+        version: link:../../packages/plugin-ffmpeg
       '@dsh-forge/plugin-k6':
         specifier: workspace:*
         version: link:../../packages/plugin-k6
