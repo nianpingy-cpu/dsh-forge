@@ -253,6 +253,27 @@ describe("quality_gate (ISSUE-018)", () => {
     }
   });
 
+  it("returns a normalized FAIL when a lane throws (never crashes the gate)", async () => {
+    // A composed tool's execute (or ctx.run) can throw; the gate must map it
+    // to a lane 'error' outcome and still produce a normalized verdict.
+    const ws = makeWorkspace({ "src/app.py": "x = 1\n" });
+    try {
+      const throwing: ExecutionRunner = async () => {
+        throw new Error("boom");
+      };
+      const r = await gate().execute(
+        { path: "src" },
+        ctx(ws, mockRunner({ ruff: throwing })),
+      );
+      expect(r.ok).toBe(true);
+      expect(r.summary).toMatch(/FAIL/);
+      expect(r.raw).toContain("ruff_check");
+      expect(r.raw).toMatch(/"error"/);
+    } finally {
+      cleanup(ws);
+    }
+  });
+
   it("passes the plugin contract suite", async () => {
     const ws = makeWorkspace({ "src/app.py": "x = 1\n" });
     try {

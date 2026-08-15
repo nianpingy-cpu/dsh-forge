@@ -328,7 +328,23 @@ const qualityGate: ToolDefinition = {
         });
         continue;
       }
-      const result = await lane.tool.execute.call(lane.tool, lane.args, ctx);
+      // A throwing composed tool (or a throw from ctx.run the tool does not
+      // normalize) must never crash the gate: map it to a lane 'error'
+      // outcome so the gate still returns a normalized verdict (FAIL).
+      let result: ToolResult;
+      try {
+        result = await lane.tool.execute.call(lane.tool, lane.args, ctx);
+      } catch (err) {
+        ran += 1;
+        laneErrors += 1;
+        outcomes.push({
+          name: lane.name,
+          status: "error",
+          findings: 0,
+          message: String(err),
+        });
+        continue;
+      }
       if (result.ok) {
         ran += 1;
         const ds = result.diagnostics ?? [];
