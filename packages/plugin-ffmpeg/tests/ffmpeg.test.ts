@@ -1,5 +1,12 @@
 import { describe, expect, it, beforeAll } from "vitest";
-import { mkdtempSync, cpSync, existsSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  cpSync,
+  existsSync,
+  statSync,
+  writeFileSync,
+  symlinkSync,
+} from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -357,6 +364,62 @@ describe("tool-specific validation", () => {
     const result = await tool().execute({ input: "tiny.wav" }, ctx(leaky));
     expect(result.ok).toBe(true);
     expect(result.raw).not.toContain("supersecret");
+  });
+
+  it("surfaces the real ffmpeg error, not the version banner", async () => {
+    const tool = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "video_transcode")!;
+    let captured: ExecutionRequest | undefined;
+    const fail: ExecutionRunner = async (req) => {
+      captured = req;
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: "Could not find a suitable output format for 'o.wav'",
+        ...OK,
+      };
+    };
+    const result = await tool().execute(
+      { input: "tiny.wav", output: "o.wav" },
+      ctx(fail),
+    );
+    expect(captured!.args).toContain("-hide_banner");
+    expect(captured!.args).toContain("-v");
+    expect(captured!.args).toContain("error");
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain("Could not find a suitable output format");
+    expect(result.error?.message).not.toContain("ffmpeg version");
+  });
+
+  it("blocks writes through a symlink escaping the workspace (output)", async () => {
+    const tool = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "video_transcode")!;
+    const linkPath = join(workspaceRoot, "escape-out.wav");
+    try {
+      symlinkSync(join(workspaceRoot, "..", "outside.wav"), linkPath, "file");
+    } catch {
+      return; // symlinks unavailable (e.g. Windows without privileges); skip
+    }
+    const result = await tool().execute(
+      { input: "tiny.wav", output: "escape-out.wav" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+  });
+
+  it("blocks reads through a symlink escaping the workspace (input)", async () => {
+    const tool = () =>
+      ffmpegPlugin.tools.find((t) => t.name === "media_probe")!;
+    const linkPath = join(workspaceRoot, "escape-in.wav");
+    try {
+      symlinkSync(join(workspaceRoot, "..", "secret.wav"), linkPath, "file");
+    } catch {
+      return; // symlinks unavailable (e.g. Windows without privileges); skip
+    }
+    const result = await tool().execute({ input: "escape-in.wav" }, ctx(mockRunner()));
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
   });
 });
 

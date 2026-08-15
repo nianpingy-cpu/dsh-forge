@@ -435,7 +435,15 @@ async function runWrite(
     if (!v.ok) return v.result;
   }
   const argv = buildArgv({ input, inputs, outputAbs: output.absolute, overwrite });
-  const run = await runBinary(ctx, resolveFfmpegBinary(), FFMPEG_BINARY_HINT, argv);
+  // -hide_banner -v error: suppresses ffmpeg's version banner and info output
+  // so the first non-empty stderr line on failure is the real error (not the
+  // banner), and the model-facing ToolFailure message is meaningful.
+  const run = await runBinary(
+    ctx,
+    resolveFfmpegBinary(),
+    FFMPEG_BINARY_HINT,
+    ["-hide_banner", "-v", "error", ...argv],
+  );
   if (!run.ok) return run.result;
   if (run.exec.exitCode !== 0) {
     return toolFailure(firstErrorLine("ffmpeg", run.exec.exitCode, run.exec.stderr));
@@ -579,6 +587,9 @@ const videoConcat: ToolDefinition = {
         resolveFfmpegBinary(),
         FFMPEG_BINARY_HINT,
         [
+          "-hide_banner",
+          "-v",
+          "error",
           overwriteFlag(overwrite),
           "-f",
           "concat",
