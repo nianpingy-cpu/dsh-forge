@@ -315,8 +315,7 @@ function overwriteFlag(overwrite: boolean): string {
 const mediaProbe: ToolDefinition = {
   name: "media_probe",
   description:
-    "Probe a media file with ffprobe and report format + stream metadata (read-only).",
-  mutationClass: "read",
+    "Probe a media file with ffprobe and report format + stream metadata (read-only). Network protocols are blocked; probing untrusted playlist media (e.g. m3u8) may still read locally referenced files.",  mutationClass: "read",
   inputSchema: {
     type: "object",
     properties: {
@@ -338,9 +337,12 @@ const mediaProbe: ToolDefinition = {
       resolveFfprobeBinary(),
       FFPROBE_BINARY_HINT,
       [
-        // Restrict ffprobe to local protocols: a hostile media file (e.g. an
-        // m3u8 whose segments point at http://169.254.169.254/ or file://...)
-        // must not trigger SSRF or arbitrary file reads from the harness.
+        // -protocol_whitelist blocks network protocols (http/https/rtsp/...), so
+        // a hostile playlist cannot trigger SSRF (e.g. cloud-metadata URLs).
+        // Local `file://` references inside a hostile playlist remain readable
+        // by the harness user — a documented residual risk for untrusted media
+        // (ffmpeg's HLS demuxer additionally restricts segment extensions by
+        // default).
         "-protocol_whitelist",
         "file,pipe,fd",
         "-v",
@@ -454,8 +456,9 @@ async function runWrite(
   const argv = buildArgv({ input, inputs, outputAbs: output.absolute, overwrite });
   // -hide_banner -v error: suppresses ffmpeg's version banner and info output
   // so the first non-empty stderr line on failure is the real error (not the
-  // banner). -protocol_whitelist file,pipe,fd blocks SSRF / arbitrary file
-  // reads from hostile media (m3u8 segment URLs, file:// references).
+  // banner). -protocol_whitelist file,pipe,fd blocks network protocols (SSRF);
+  // local file:// references inside hostile playlists remain readable by the
+  // harness user (documented residual risk).
   const run = await runBinary(
     ctx,
     resolveFfmpegBinary(),
