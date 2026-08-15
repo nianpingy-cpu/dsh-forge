@@ -39,35 +39,41 @@ try {
 }
 
 describe("real DSH E2E (load plugin, model calls tool, structured result)", () => {
-  it("loads a preset, registers every tool, and routes a typed call to a canonical result", async () => {
-    if (!hasRealRuff) return; // CI installs Ruff; skip elsewhere
-
-    // load preset -> every plugin/tool registered
-    const preset = resolvePresetOrThrow("python");
-    const host = createHost(ctx());
-    host.load(preset.plugins);
-    for (const plugin of preset.plugins) {
-      for (const tool of plugin.tools) {
-        expect(host.toolNames).toContain(tool.name);
-      }
-    }
-    expect(host.toolNames.length).toBe(
-      preset.plugins.reduce((n, p) => n + p.tools.length, 0),
-    );
-
-    // model calls a tool with typed args -> canonical structured result
-    const res = await host.call("ruff_check", { paths: ["broken.py"] });
-    expect(typeof res.ok).toBe("boolean");
-    expect(typeof res.summary).toBe("string");
-    if (!res.ok) {
-      expect(res.error).toBeDefined();
-      expect(res.error?.code).toBeDefined();
-    }
+  describe("preset resolution (no binary required)", () => {
+    it("unknown preset fails to load (no plugin code duplication, config only)", () => {
+      expect(() => resolvePresetOrThrow("not-a-preset")).toThrow(
+        /unknown preset/i,
+      );
+    });
   });
 
-  it("unknown preset fails to load (no plugin code duplication, config only)", () => {
-    expect(() => resolvePresetOrThrow("not-a-preset")).toThrow(
-      /unknown preset/i,
+  // Visible skip (not a silent pass) when Ruff is absent locally; the CI
+  // prerequisite test in integration.test.ts fails if CI ever drops Ruff, so
+  // this real roundtrip always runs in CI and asserts actual success.
+  describe.skipIf(!hasRealRuff)("real roundtrip", () => {
+    it(
+      "loads a preset, registers every tool, and routes a typed call to a canonical success result",
+      async () => {
+        // load preset -> every plugin/tool registered
+        const preset = resolvePresetOrThrow("python");
+        const host = createHost(ctx());
+        host.load(preset.plugins);
+        for (const plugin of preset.plugins) {
+          for (const tool of plugin.tools) {
+            expect(host.toolNames).toContain(tool.name);
+          }
+        }
+        expect(host.toolNames.length).toBe(
+          preset.plugins.reduce((n, p) => n + p.tools.length, 0),
+        );
+
+        // model calls a tool with typed args -> canonical structured success
+        const res = await host.call("ruff_check", { paths: ["clean.py"] });
+        expect(res.ok).toBe(true);
+        expect(res.diagnostics?.length ?? 0).toBe(0);
+        expect(typeof res.summary).toBe("string");
+      },
+      30_000,
     );
   });
 });

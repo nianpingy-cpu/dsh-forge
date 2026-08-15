@@ -38,41 +38,64 @@ try {
 }
 
 describe("deterministic no-API integration (ISSUE-013)", () => {
-  it("loads a real plugin and a typed tool call returns a canonical structured result", async () => {
-    if (!hasRealRuff) return; // CI installs Ruff; skip elsewhere
+  describe("host registration (no binary required)", () => {
+    it("rejects a call to an unregistered tool with a canonical error", async () => {
+      const host = createHost(ctx());
+      host.load([ruffPlugin]);
+      const res = await host.call("does_not_exist", {});
+      expect(res.ok).toBe(false);
+      expect(res.error?.code).toBe("InvalidArguments");
+    });
 
-    // 1. plugin loads
-    expect(ruffPlugin.metadata.name).toBe("@dsh-forge/plugin-ruff");
-
-    // 2. tool registers through the host
-    const host = createHost(ctx());
-    host.load([ruffPlugin]);
-    expect(host.toolNames).toContain("ruff_check");
-
-    // 3. typed call -> canonical structured result
-    const clean = await host.call("ruff_check", { paths: ["clean.py"] });
-    expect(clean.ok).toBe(true);
-    expect(clean.diagnostics?.length ?? 0).toBe(0);
-    expect(typeof clean.summary).toBe("string");
-
-    // a file with lint findings returns ok:true with normalized diagnostics
-    const violations = await host.call("ruff_check", { paths: ["sample.py"] });
-    expect(violations.ok).toBe(true);
-    expect(violations.diagnostics).toBeDefined();
-    expect(violations.diagnostics!.length).toBeGreaterThan(0);
+    it("refuses to register the same tool name twice", async () => {
+      const host = createHost(ctx());
+      host.load([ruffPlugin]);
+      expect(() => host.load([ruffPlugin])).toThrow(
+        /duplicate tool registration/i,
+      );
+    });
   });
 
-  it("rejects a call to an unregistered tool with a canonical error", async () => {
-    const host = createHost(ctx());
-    host.load([ruffPlugin]);
-    const res = await host.call("does_not_exist", {});
-    expect(res.ok).toBe(false);
-    expect(res.error?.code).toBe("InvalidArguments");
+  // Visible skip (not a silent pass) when Ruff is absent locally; CI installs
+  // Ruff and the CI-prerequisite test below fails if it ever goes missing, so
+  // the real-binary roundtrip is always exercised in CI.
+  describe.skipIf(!hasRealRuff)("real binary roundtrip", () => {
+    it(
+      "loads a real plugin and a typed tool call returns a canonical structured result",
+      async () => {
+        // 1. plugin loads
+        expect(ruffPlugin.metadata.name).toBe("@dsh-forge/plugin-ruff");
+
+        // 2. tool registers through the host
+        const host = createHost(ctx());
+        host.load([ruffPlugin]);
+        expect(host.toolNames).toContain("ruff_check");
+
+        // 3. typed call -> canonical structured result (real Ruff binary)
+        const clean = await host.call("ruff_check", { paths: ["clean.py"] });
+        expect(clean.ok).toBe(true);
+        expect(clean.diagnostics?.length ?? 0).toBe(0);
+        expect(typeof clean.summary).toBe("string");
+
+        // a file with lint findings returns ok:true with normalized diagnostics
+        const violations = await host.call("ruff_check", {
+          paths: ["sample.py"],
+        });
+        expect(violations.ok).toBe(true);
+        expect(violations.diagnostics).toBeDefined();
+        expect(violations.diagnostics!.length).toBeGreaterThan(0);
+      },
+      30_000,
+    );
   });
 
-  it("refuses to register the same tool name twice", async () => {
-    const host = createHost(ctx());
-    host.load([ruffPlugin]);
-    expect(() => host.load([ruffPlugin])).toThrow(/duplicate tool registration/i);
+  describe("CI fixture prerequisites", () => {
+    it("CI installs Ruff so the real-binary E2E runs (never silently skipped)", () => {
+      if (!process.env.CI) return; // local machines may not have Ruff
+      expect(
+        hasRealRuff,
+        "CI must install ruff (see .github/workflows/ci.yml) so the real-binary E2E is exercised",
+      ).toBe(true);
+    });
   });
 });
