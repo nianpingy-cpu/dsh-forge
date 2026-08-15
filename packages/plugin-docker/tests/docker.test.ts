@@ -93,17 +93,21 @@ const IMAGES_JSON = [
   .map((o) => JSON.stringify(o))
   .join("\n");
 
-const COMPOSE_JSON = [
-  {
-    Name: "proj-web-1",
-    Service: "web",
-    Status: "running",
-    Ports: "0.0.0.0:8080->80/tcp",
-  },
-  { Name: "proj-db-1", Service: "db", Status: "running", Ports: "" },
-]
-  .map((o) => JSON.stringify(o))
-  .join("\n");
+// Real `docker compose ps --format json` emits a single JSON array (not
+// line-delimited objects like docker ps/images).
+const COMPOSE_JSON = JSON.stringify(
+  [
+    {
+      Name: "proj-web-1",
+      Service: "web",
+      Status: "running",
+      Ports: "0.0.0.0:8080->80/tcp",
+    },
+    { Name: "proj-db-1", Service: "db", Status: "running", Ports: "" },
+  ],
+  null,
+  2,
+);
 
 const OK = {
   timedOut: false,
@@ -310,6 +314,29 @@ describe("docker_compose_status", () => {
     expect(JSON.stringify(parsed)).toContain("web");
   });
 
+  it("also parses line-delimited compose output ({{json .}} style)", async () => {
+    const lines = [
+      { Name: "proj-web-1", Service: "web", Status: "running" },
+      { Name: "proj-db-1", Service: "db", Status: "running" },
+    ]
+      .map((o) => JSON.stringify(o))
+      .join("\n");
+    const runner = mockRunner({
+      compose: async () => ({
+        exitCode: 0,
+        stdout: lines,
+        stderr: "",
+        ...OK,
+      }),
+    });
+    const result = await tool().execute(
+      { path: "compose.yaml" },
+      ctx(runner),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toBe("2 service(s)");
+  });
+
   it("rejects a path outside the workspace", async () => {
     const result = await tool().execute(
       { path: "../outside/compose.yaml" },
@@ -379,6 +406,33 @@ describe("live docker (opt-in)", () => {
     expect(result.ok).toBe(true);
     expect(result.summary).toMatch(/docker available/i);
   }, 30_000);
+
+  it("parses a real compose ps --format json array when Docker is available", async () => {
+    if (!hasRealDocker) return;
+    const probe = await dockerRunner({
+      binary: resolveDockerBinary(),
+      args: ["info", "--format", "{{.ServerVersion}}"],
+      cwd: workspaceRoot,
+      timeoutMs: 15_000,
+    });
+    if (probe.error || probe.exitCode !== 0) {
+      // daemon not reachable on this host; skip
+      return;
+    }
+    const tool = () =>
+      dockerPlugin.tools.find((t) => t.name === "docker_compose_status")!;
+    // `docker compose ps` does not pull images or start containers, so it is
+    // safe against the fixture's remote images; it lists the project services.
+    const result = await tool().execute(
+      { path: "compose.yaml" },
+      ctx(dockerRunner),
+    );
+    expect(result.ok).toBe(true);
+    const parsed = JSON.parse(result.raw as string);
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(parsed)).toContain("web");
+  }, 60_000);
 });
 
 describe("default export", () => {

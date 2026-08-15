@@ -226,6 +226,45 @@ function itemsResult(what: string, items: unknown[]): ToolResult {
   return okResult(summary, raw);
 }
 
+/**
+ * Parse compose `ps` output: `docker compose ps --format json` emits a single
+ * JSON *array* (pretty-printed or single-line), while a `{{json .}}` template
+ * emits one JSON object per line. Accept both so the tool works against real
+ * compose v2 regardless of formatting.
+ */
+function parseJsonArrayOrLines(
+  stdout: string,
+): { ok: true; items: unknown[] } | { ok: false; result: ToolResult } {
+  const trimmed = stdout.trim();
+  if (trimmed.startsWith("[")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      // not a whole-document array; fall through to line parsing
+    }
+    if (Array.isArray(parsed)) {
+      for (const item of parsed) {
+        if (typeof item !== "object" || item === null || Array.isArray(item)) {
+          return {
+            ok: false,
+            result: {
+              ok: false,
+              summary: "docker parse failed",
+              error: {
+                code: "ParseFailure",
+                message: "docker: expected a JSON object per compose service entry",
+              },
+            },
+          };
+        }
+      }
+      return { ok: true, items: parsed };
+    }
+  }
+  return parseJsonLines(stdout);
+}
+
 /** Reject empty or leading-dash container/image names (flag injection). */
 function isValidName(value: unknown): value is string {
   return (
@@ -459,7 +498,7 @@ const dockerComposeStatus: ToolDefinition = {
     if (run.exec.exitCode !== 0) {
       return toolFailure(firstErrorLine(run.exec.exitCode, run.exec.stderr));
     }
-    const parsed = parseJsonLines(run.exec.stdout);
+    const parsed = parseJsonArrayOrLines(run.exec.stdout);
     if (!parsed.ok) return parsed.result;
     return itemsResult("service", parsed.items);
   },
