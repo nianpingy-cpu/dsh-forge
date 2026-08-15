@@ -248,6 +248,51 @@ describe("trivy_config_scan", () => {
     expect(result.error?.code).toBe("InvalidArguments");
   });
 
+  it("redacts misconfig CauseMetadata code lines from raw output", async () => {
+    const report = JSON.stringify({
+      Results: [
+        {
+          Target: "Dockerfile",
+          Class: "config",
+          Misconfigurations: [
+            {
+              ID: "DS-0002",
+              Severity: "HIGH",
+              Title: "root user",
+              CauseMetadata: {
+                StartLine: 4,
+                Code: {
+                  Lines: [
+                    {
+                      Number: 4,
+                      Content:
+                        "ENV AWS_ACCESS_KEY_ID=AKIA5K4D3X7Q2T9P0Z1W",
+                      Highlighted: "AKIA5K4D3X7Q2T9P0Z1W",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const mock: ExecutionRunner = async () => ({
+      exitCode: 0,
+      stdout: report,
+      stderr: "",
+      timedOut: false,
+      aborted: false,
+      truncated: false,
+      durationMs: 1,
+    });
+    const result = await tool().execute({ path: "config" }, ctx(mock));
+    expect(result.ok).toBe(true);
+    expect(result.raw).toBeTruthy();
+    expect(result.raw).not.toContain("AKIA5K4D3X7Q2T9P0Z1W");
+    expect(result.raw).toContain("[REDACTED]");
+  });
+
   it("maps trivy severities explicitly (MEDIUM->warning, LOW->info, UNKNOWN->info)", async () => {
     const report = JSON.stringify({
       Results: [

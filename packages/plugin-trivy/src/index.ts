@@ -206,7 +206,11 @@ interface TrivyMisconfig {
   Status?: unknown;
   StartLine?: unknown;
   EndLine?: unknown;
-  CauseMetadata?: { StartLine?: unknown; EndLine?: unknown };
+  CauseMetadata?: {
+    StartLine?: unknown;
+    EndLine?: unknown;
+    Code?: { Lines?: { Content?: unknown; Highlighted?: unknown }[] };
+  };
   Resolution?: unknown;
 }
 
@@ -385,6 +389,28 @@ function redactReportObject(report: TrivyReport): boolean {
         changed = true;
       }
     }
+    // Misconfig findings embed the offending IaC source snippet in
+    // CauseMetadata.Code.Lines[].Content, which can contain hardcoded secrets;
+    // redact it too so raw never echoes them.
+    for (const m of r.Misconfigurations ?? []) {
+      const lines = m.CauseMetadata?.Code?.Lines;
+      if (lines) {
+        for (const line of lines) {
+          if (line.Content !== undefined) {
+            line.Content = "[REDACTED]";
+            changed = true;
+          }
+          if (line.Highlighted !== undefined) {
+            line.Highlighted = "[REDACTED]";
+            changed = true;
+          }
+        }
+      }
+      if (m.CauseMetadata?.Code !== undefined) {
+        m.CauseMetadata.Code = { Lines: [{ Content: "[REDACTED]" }] };
+        changed = true;
+      }
+    }
   }
   return changed;
 }
@@ -458,11 +484,13 @@ function sbomResult(
 ): ToolResult {
   const parsed = parseReport(run);
   if (!parsed.ok) return parsed.result;
+  const changed = redactReportObject(parsed.report);
   const diagnostics = findingsToDiagnostics(
     workspaceRoot,
     parsed.report.Results ?? [],
     "license",
   );
+  const safeRaw = changed ? JSON.stringify(parsed.report) : run.stdout;
   return {
     ok: true,
     summary:
@@ -475,9 +503,9 @@ function sbomResult(
         ? summarizeDiagnostics(TOOL, diagnostics)
         : undefined,
     raw:
-      run.stdout.length > 20_000
-        ? run.stdout.slice(0, 20_000) + "\n...[truncated]"
-        : run.stdout,
+      safeRaw.length > 20_000
+        ? safeRaw.slice(0, 20_000) + "\n...[truncated]"
+        : safeRaw,
   };
 }
 
