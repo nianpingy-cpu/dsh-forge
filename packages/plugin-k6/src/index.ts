@@ -176,6 +176,11 @@ function okResult(summary: string, raw: string): ToolResult {
   };
 }
 
+/** Hard ceiling on a single k6 run (test window + startup/summary margin). */
+const MAX_RUN_TIMEOUT = 30 * 60_000;
+const DURATION_CEILING_MSG =
+  "duration exceeds the 30-minute ceiling (the run timeout is duration + a 90s margin)";
+
 /** Parse a k6 duration like "30s"/"5m"/"1h" into milliseconds (NaN if invalid). */
 function durationMs(d: string): number {
   const m = /^(\d+)(ms|s|m|h)$/.exec(d.trim());
@@ -198,18 +203,24 @@ function durationMs(d: string): number {
 /**
  * Scale the process timeout with the requested test duration so a long test
  * window (e.g. k6_stress's 5m default) is never killed by a fixed short
- * timeout. Adds a 90s margin for k6 startup + summary shutdown, capped at 30
- * minutes. Falls back to `fallbackMs` when no parseable duration is given
+ * timeout. Adds a 90s margin for k6 startup + summary shutdown, capped at
+ * 30 minutes. Falls back to `fallbackMs` when no parseable duration is given
  * (a script-defined duration is unknown).
  */
 function runTimeout(duration: string | undefined, fallbackMs: number): number {
   if (duration !== undefined) {
     const ms = durationMs(duration);
     if (Number.isFinite(ms)) {
-      return Math.min(ms + 90_000, 30 * 60_000);
+      return Math.min(ms + 90_000, MAX_RUN_TIMEOUT);
     }
   }
   return fallbackMs;
+}
+
+/** True when the duration's needed timeout fits within the 30-minute ceiling. */
+function durationWithinCeiling(duration: string): boolean {
+  const ms = durationMs(duration);
+  return Number.isFinite(ms) && ms + 90_000 <= MAX_RUN_TIMEOUT;
 }
 
 /** Resolve a workspace-relative script path; never throws. */
@@ -246,7 +257,10 @@ function resolveScript(
  * a script/runtime error surfaced as ToolFailure.
  */
 function k6RunResult(run: { exec: { exitCode: number; stdout: string; stderr: string } }): ToolResult {
-  const raw = run.exec.stdout + run.exec.stderr;
+  // k6 echoes per-request errors to stderr that include the full target URL
+  // (possibly with embedded basic-auth credentials, e.g. http://user:pass@host/)
+  // even on exit 0 when thresholds still pass. Redact on the success path too.
+  const raw = redactCredentials(run.exec.stdout + run.exec.stderr);
   if (run.exec.exitCode === 0) {
     return okResult("k6 run completed (all thresholds passed)", raw);
   }
@@ -393,7 +407,8 @@ const k6Run: ToolDefinition = {
       vus: { type: "number", description: "virtual users (default: script options or 1)" },
       duration: {
         type: "string",
-        description: "test duration, e.g. 30s, 1m, 1h",
+        description:
+          "test duration, e.g. 30s, 1m, 1h (capped at ~28.5m; the run timeout is duration + a 90s margin, max 30m)",
       },
     },
     required: ["script"],
@@ -417,6 +432,9 @@ const k6Run: ToolDefinition = {
     if (duration !== undefined && !isValidDuration(duration)) {
       return invalid("duration must be a positive value with a unit, e.g. 30s, 1m, 1h");
     }
+    if (duration !== undefined && !durationWithinCeiling(duration)) {
+      return invalid(DURATION_CEILING_MSG);
+    }
     const argv = [
       "run",
       resolved.absolute,
@@ -425,8 +443,8 @@ const k6Run: ToolDefinition = {
     ];
     const run = await runK6(ctx, argv, {
       // Scale with an explicit duration; a script-defined duration is
-      // unknown, so fall back to a generous 15-minute cap.
-      timeoutMs: runTimeout(duration?.trim(), 900_000),
+      // unknown, so fall back to the 30-minute ceiling.
+      timeoutMs: runTimeout(duration?.trim(), MAX_RUN_TIMEOUT),
     });
     if (!run.ok) return run.result;
     return k6RunResult(run);
@@ -464,6 +482,9 @@ const k6Smoke: ToolDefinition = {
     const d = duration ?? "30s";
     if (!isValidDuration(d)) {
       return invalid("duration must be a positive value with a unit, e.g. 30s, 1m");
+    }
+    if (!durationWithinCeiling(d)) {
+      return invalid(DURATION_CEILING_MSG);
     }
     const run = await runK6(
       ctx,
@@ -506,6 +527,7 @@ const k6Load: ToolDefinition = {
     if (!Number.isInteger(v) || v <= 0) return invalid("vus must be a positive integer");
     const d = duration ?? "2m";
     if (!isValidDuration(d)) return invalid("duration must be a positive value with a unit");
+    if (!durationWithinCeiling(d)) return invalid(DURATION_CEILING_MSG);
     const run = await runK6(
       ctx,
       ["run", resolved.absolute, "--vus", String(v), "--duration", d.trim()],
@@ -547,6 +569,7 @@ const k6Stress: ToolDefinition = {
     if (!Number.isInteger(v) || v <= 0) return invalid("vus must be a positive integer");
     const d = duration ?? "5m";
     if (!isValidDuration(d)) return invalid("duration must be a positive value with a unit");
+    if (!durationWithinCeiling(d)) return invalid(DURATION_CEILING_MSG);
     const run = await runK6(
       ctx,
       ["run", resolved.absolute, "--vus", String(v), "--duration", d.trim()],

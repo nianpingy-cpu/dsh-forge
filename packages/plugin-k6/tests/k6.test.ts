@@ -231,19 +231,53 @@ describe("k6_run (process)", () => {
     expect(result.error?.code).toBe("WorkspaceViolation");
   });
 
-  it("caps an explicit long duration timeout at 30 minutes", async () => {
+  it("rejects a duration whose needed timeout exceeds the 30-minute ceiling", async () => {
+    const a = await tool().execute(
+      { script: "script.js", duration: "1h" },
+      ctx(mockRunner()),
+    );
+    const b = await tool().execute(
+      { script: "script.js", duration: "30m" },
+      ctx(mockRunner()),
+    );
+    expect(a.ok).toBe(false);
+    expect(a.error?.code).toBe("InvalidArguments");
+    expect(b.ok).toBe(false);
+    expect(b.error?.code).toBe("InvalidArguments");
+  });
+
+  it("accepts a duration inside the ceiling with a scaled timeout", async () => {
     let captured: ExecutionRequest | undefined;
     const capture: ExecutionRunner = async (req) => {
       captured = req;
       return { exitCode: 0, stdout: RUN_OUTPUT, stderr: "", ...OK };
     };
     const result = await tool().execute(
-      { script: "script.js", duration: "1h" },
+      { script: "script.js", duration: "28m" },
       ctx(capture),
     );
     expect(result.ok).toBe(true);
     expect(captured).toBeTruthy();
-    expect(captured!.timeoutMs).toBe(30 * 60_000);
+    expect(captured!.timeoutMs).toBe(28 * 60_000 + 90_000);
+  });
+
+  it("redacts embedded credentials from successful run output", async () => {
+    const runner = mockRunner({
+      run: async () => ({
+        exitCode: 0,
+        stdout: RUN_OUTPUT,
+        stderr:
+          'level=error msg="Get "http://user:supersecret@host/": dial tcp ..."',
+        ...OK,
+      }),
+    });
+    const result = await tool().execute(
+      { script: "script.js" },
+      ctx(runner),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.raw).not.toContain("supersecret");
+    expect(result.raw).toContain("***@");
   });
 });
 
