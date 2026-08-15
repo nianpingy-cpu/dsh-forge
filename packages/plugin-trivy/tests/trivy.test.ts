@@ -149,6 +149,30 @@ describe("trivy_repo_scan", () => {
     expect(b.error?.code).toBe("InvalidArguments");
   });
 
+  it("credential-redacts a tokenized repo URL from success raw output", async () => {
+    const withToken = JSON.stringify({
+      ArtifactName: "https://TOKEN123@github.com/org/repo.git",
+      Results: [],
+    });
+    const mock: ExecutionRunner = async () => ({
+      exitCode: 0,
+      stdout: withToken,
+      stderr: "",
+      timedOut: false,
+      aborted: false,
+      truncated: false,
+      durationMs: 1,
+    });
+    const result = await tool().execute(
+      { repo: "https://TOKEN123@github.com/org/repo.git" },
+      ctx(mock),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.raw).toBeTruthy();
+    expect(result.raw).not.toContain("TOKEN123");
+    expect(result.raw).toContain("***@");
+  });
+
   it("redacts secret Match and Code line content from raw output", async () => {
     const withSecrets = JSON.stringify({
       Results: [

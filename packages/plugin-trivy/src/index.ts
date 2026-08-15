@@ -462,7 +462,9 @@ function reportResult(
     type,
   );
   const includeRaw = opts?.includeRaw ?? true;
-  const safeRaw = changed ? JSON.stringify(parsed.report) : run.stdout;
+  const safeRaw = redactCredentials(
+    changed ? JSON.stringify(parsed.report) : run.stdout,
+  );
   return {
     ok: true,
     summary:
@@ -501,7 +503,9 @@ function sbomResult(
     parsed.report.Results ?? [],
     "license",
   );
-  const safeRaw = changed ? JSON.stringify(parsed.report) : run.stdout;
+  const safeRaw = redactCredentials(
+    changed ? JSON.stringify(parsed.report) : run.stdout,
+  );
   return {
     ok: true,
     summary:
