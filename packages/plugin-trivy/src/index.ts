@@ -358,42 +358,35 @@ function findingsToDiagnostics(
  * whole Code block as a belt-and-suspenders guard. Non-JSON text passes
  * through unchanged (trivy --format json is always JSON, so this is a guard).
  */
-function redactReportSecrets(text: string): string {
-  try {
-    const data = JSON.parse(text) as { Results?: TrivyResult[] };
-    let changed = false;
-    for (const r of data.Results ?? []) {
-      for (const s of r.Secrets ?? []) {
-        const rec = s as {
-          Match?: unknown;
-          Code?: {
-            Lines?: { Content?: unknown; Highlighted?: unknown }[];
-          };
-        };
-        if (rec.Match !== undefined) {
-          rec.Match = "[REDACTED]";
+function redactReportObject(report: TrivyReport): boolean {
+  let changed = false;
+  for (const r of report.Results ?? []) {
+    for (const s of r.Secrets ?? []) {
+      const rec = s as {
+        Match?: unknown;
+        Code?: { Lines?: { Content?: unknown; Highlighted?: unknown }[] };
+      };
+      if (rec.Match !== undefined) {
+        rec.Match = "[REDACTED]";
+        changed = true;
+      }
+      for (const line of rec.Code?.Lines ?? []) {
+        if (line.Content !== undefined) {
+          line.Content = "[REDACTED]";
           changed = true;
         }
-        for (const line of rec.Code?.Lines ?? []) {
-          if (line.Content !== undefined) {
-            line.Content = "[REDACTED]";
-            changed = true;
-          }
-          if (line.Highlighted !== undefined) {
-            line.Highlighted = "[REDACTED]";
-            changed = true;
-          }
-        }
-        if (rec.Code !== undefined) {
-          rec.Code = { Lines: [{ Content: "[REDACTED]" }] };
+        if (line.Highlighted !== undefined) {
+          line.Highlighted = "[REDACTED]";
           changed = true;
         }
       }
+      if (rec.Code !== undefined) {
+        rec.Code = { Lines: [{ Content: "[REDACTED]" }] };
+        changed = true;
+      }
     }
-    return changed ? JSON.stringify(data) : text;
-  } catch {
-    return text;
   }
+  return changed;
 }
 
 /**
@@ -422,13 +415,17 @@ function reportResult(
 ): ToolResult {
   const parsed = parseReport(run);
   if (!parsed.ok) return parsed.result;
+  // Redact the object already parsed by parseReport — never re-parse the raw
+  // string (a strict re-parse divergence must not fall back to emitting
+  // unredacted plaintext secrets). Raw is rebuilt from the redacted object.
+  const changed = redactReportObject(parsed.report);
   const diagnostics = findingsToDiagnostics(
     workspaceRoot,
     parsed.report.Results ?? [],
     type,
   );
   const includeRaw = opts?.includeRaw ?? true;
-  const safeRaw = redactReportSecrets(run.stdout);
+  const safeRaw = changed ? JSON.stringify(parsed.report) : run.stdout;
   return {
     ok: true,
     summary:
