@@ -67,7 +67,18 @@ jobs:
           tar -xzf k6.tar.gz -C /usr/local/bin --strip-components=1
           k6 version
 
-      - name: Install ffmpeg (integration fixtures, all OS)
+      # ffmpeg for the plugin-ffmpeg live integration tests. Linux uses apt
+      # (deterministic; the setup-ffmpeg action's release-version lookup is
+      # flaky on Linux runners); Windows uses the cross-platform action.
+      - name: Install ffmpeg (integration fixtures, Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Install ffmpeg (integration fixtures, Windows)
+        if: runner.os == 'Windows'
         uses: FedericoCarboni/setup-ffmpeg@v3
 
       - name: Typecheck
