@@ -1,32 +1,31 @@
 {
-  "verdict": "request_changes",
-  "blocking": [
-    "packages/core/src/index.ts:1 (and ~29 other touched .ts/.json files): every touched source and JSON file has a UTF-8 BOM (U+FEFF) prepended AND existing non-ASCII characters re-encoded through a legacy codepage. Em dashes (U+2014) become '鈥?', arrows (→) become '鈫?' across comments. This is not just cosmetic: the quality_gate summary string literal is corrupted to 'quality gate: ${verdict} 鈥?${...}' (packages/plugin-quality-gate/src/index.ts ~line 365), so the model-facing tool output now contains mojibake. Any other non-ASCII string literals / regexes in the 11 plugins (semgrep/trivy/act output markers, tool descriptions) may be silently corrupted in ways not visible in the diff. Additionally, a BOM in every package.json violates RFC 8258 and breaks tools that read them with strict JSON.parse.",
-    "packages/plugin-act/src/index.ts ~line 545 (all 11 plugin packages): the release bumped package.json version and metadata.coreContractVersion to 0.2.0 but left the plugin metadata `version` field at \"0.1.0\" in every plugin (act, ast-grep, biome, docker, ffmpeg, k6, quality-gate, ruff, semgrep, trivy, uv). The harness host reads metadata.version for compatibility reasoning, so this release ships 11 plugins declaring version 0.1.0 against core contract 0.2.0. For a PR whose sole purpose is the 0.2.0 version bump, the bump is incomplete and the acceptance criterion \"version 0.2.0 bump across all packages\" is not met."
-  ],
+  "verdict": "approve",
+  "blocking": [],
   "non_blocking": [
-    "presets/presets/tests/presets.test.ts:11 - describe() block label still reads 'presets (V0.1.0: coding, python, web)' after the V0.2.0 rename.",
-    "presets/presets/src/index.ts - the new 'security' preset bundles semgrep + trivy + quality-gate, but quality_gate's lint lanes orchestrate Ruff/Biome tools, which are NOT included in the security preset (they live in 'coding'). Running quality_gate under only the 'security' preset may fail or degrade the lint lane instead of skipping it cleanly.",
-    "PROJECT_STATUS.md:5 - 'Current Branch' still points to 'V0.1.0/issue-009-ast-grep-read-adapter (chain tip)', stale in a file this PR is editing."
+    "reviews/PR-54/reviewer-a.json and reviewer-a.md are committed at HEAD but describe the pre-fix state (two 'blocking' items — BOM/mojibake and metadata.version 0.1.0) that the same HEAD commit d2bfdee already resolved; the artifact verdict 'request_changes' is stale/misleading evidence if merged as-is, and both files are deleted in the working tree, making the intended PR delta ambiguous.",
+    "PROJECT_STATUS.md:6 — 'Current Branch' still reads 'V0.1.0/issue-009-ast-grep-read-adapter (chain tip)' in a file this PR is editing; the actual PR branch is V0.1.0/issue-019-v0.2.0-release.",
+    "presets/presets/tests/presets.test.ts:10 — describe() label still reads 'presets (V0.1.0: coding, python, web)' while the assertions were renamed to V0.2.0.",
+    "README.md and PROJECT_STATUS.md:3 claim 'V0.2.0 — published (tag v0.2.0)' and 'ISSUE-019 MERGED' while the PR is not merged and `git tag` shows only v0.1.0; docs forward-date the release state (consistent with the repo's established release-doc pattern, but currently inaccurate)."
   ],
   "security": [
-    "The encoding corruption is a security-relevant risk for this tool set: semgrep/trivy/quality-gate parse machine output and produce findings. If any non-ASCII string literal or matching marker inside those parsers was re-encoded the same way as the visible '鈥?' corruption, matching behavior or emitted findings could silently change (false negatives for a security scanner). The known concrete case is the quality_gate summary string, demonstrating the corruption reaches executable strings, not just comments.",
-    "The 'security' preset can load quality_gate without the Ruff/Biome plugins its lint lanes depend on; depending on how missing-tool is classified (BinaryNotFound vs ToolFailure), the gate could return FAIL instead of skipping, making the security preset unable to certify on Python/JS projects."
+    "Encoding corruption that the prior review flagged as security-relevant (re-encoded string literals inside semgrep/trivy/quality-gate parsers) is verified absent at HEAD: no UTF-8 BOM and no mojibake sequences (鈥/鈫/锟) remain in any source/JSON file, and the quality_gate summary em dash at packages/plugin-quality-gate/src/index.ts:365 is intact. Residual risk: nothing prevents recurrence — see test_gaps.",
+    "The 'security' preset registers quality_gate without registering Ruff/Biome. This is NOT a runtime failure today because quality_gate composes lane tools via direct static imports (packages/plugin-quality-gate/src/index.ts:37-40, 141-148) rather than host registry resolution, so the lint lane still runs. However, a host that exposes only preset-registered tools will not surface ruff_check/biome_check, and quality_gate's advertised lint:python/lint:web capabilities are not independently reachable from the security preset; a future refactor to host-resolved lanes would silently degrade the lint lane. Recommend a test pinning lane skip-vs-fail behavior under the security preset.",
+    "No new permission surface introduced: bundling act/docker/k6 into 'devops' and semgrep/trivy/quality-gate into 'security' does not alter per-tool mutationClass or DSH permission gating; presets are composition-only arrays of existing plugin objects."
   ],
   "test_gaps": [
-    "No release-consistency test asserting every package.json version AND every plugin metadata.version equals CORE_VERSION — this is exactly what let the stale 0.1.0 metadata.version slip through in all 11 plugins while smoke.test.ts only checks CORE_VERSION.",
-    "No CI/encoding guard (e.g., lint rule or script) rejecting UTF-8 BOMs and mojibake in source/JSON files; the 29-file encoding corruption went undetected by test/typecheck/lint/build.",
-    "No test that the 'security' preset can run quality_gate end-to-end with its lint lanes resolvable or cleanly skipped when ruff/biome are absent.",
-    "presets/presets/tests/presets.test.ts stale suite label and no assertion pinning preset -> plugin dependency coverage (e.g., that quality_gate's dependencies are present in some preset)."
+    "No release-consistency test asserting every package.json version AND every plugin metadata.version equals CORE_VERSION — this is exactly what let metadata.version stay at 0.1.0 across all 11 plugins while smoke.test.ts only checks CORE_VERSION; the drift was caught by manual review, not CI.",
+    "No CI/encoding guard (lint rule or script) rejecting UTF-8 BOMs and mojibake in source/JSON files; the 29-file re-encoding corruption in ab49905 passed test/typecheck/lint/build undetected.",
+    "No test asserting every plugin referenced by a preset is declared as a dependency of presets/presets/package.json; a missing workspace dep would fail only at preset load/import time.",
+    "No test pinning quality_gate lane behavior when Ruff/Biome are not registered (currently skipped-fine by direct import); guards against a regression toward host-resolved lanes that would break the security preset."
   ],
   "compatibility": [
-    "BOM prepended to all package.json files violates JSON spec (implementations MUST NOT add a BOM) and breaks downstream tools that read package.json with strict JSON.parse; Node/npm/pnpm tolerate it, but release/publish/registry tooling often does not.",
-    "Plugin metadata version 0.1.0 vs coreContractVersion 0.2.0: the DeepSeek Harness host reasoning on plugin versions will see an internally inconsistent package (package.json says 0.2.0, metadata says 0.1.0).",
-    "No changes to the DeepSeek Harness compatibility manifest in this PR despite the core contract bump to 0.2.0; the manifest still records the pinned upstream commit without noting how coreContractVersion 0.2.0 maps to it (acceptable only if the bump is purely internal)."
+    "The DeepSeek Harness compatibility manifest (compatibility/deepseek-harness.json) correctly needs no change for this PR: it pins the upstream repo commit 47f9438, and the coreContractVersion 0.1.0→0.2.0 bump is internal; the prior reviewer's complaint on this point does not hold.",
+    "Internal version consistency is now complete and verified at HEAD: root/core/11 plugins/presets package.json, all plugin metadata.version, all coreContractVersion, and CORE_VERSION are uniformly 0.2.0 — the earlier package.json-vs-metadata skew is resolved.",
+    "Docs claim tag v0.2.0 is published, but no v0.2.0 tag exists in the repo (only v0.1.0); the tag must be created post-merge for the acceptance criterion 'tag v0.2.0 published' to actually hold."
   ],
   "architecture": [
-    "Preset composition gap: the 'security' preset's quality_gate tool depends on Ruff/Biome lane tools that are only registered via the 'coding'/'python'/'web' presets; presets are currently not validated for intra-preset tool dependencies.",
-    "The version bump touched metadata.coreContractVersion but not metadata.version in every plugin, suggesting the bump was applied mechanically per-file rather than via a shared version source (e.g., a single constant read by all metadata objects); a shared CORE_VERSION-derived source would prevent recurrence."
+    "Preset composition gap: the 'security' preset's quality_gate tool depends on Ruff/Biome lane tools that are only registered via the coding/python/web presets; it works at runtime only because of direct module imports rather than the host tool registry. Preset→plugin dependency coverage is not validated.",
+    "The version bump is applied as manual per-file edits with no shared version source (e.g., a single constant imported by all metadata objects); this is the second occurrence of version-skew drift across plugins (see prior PR-41/PR-50 review notes on hardcoded coreContractVersion), so recurrence is likely without a shared constant or the consistency test proposed above."
   ],
   "confidence": 0.85
 }
