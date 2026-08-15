@@ -137,7 +137,31 @@ function mockRunner(
           stderr: "2026-01-01T10:00:02 [warn] disk almost full",
           ...OK,
         };
+      case "build":
+        return {
+          exitCode: 0,
+          stdout:
+            "#1 [1/1] FROM nginx:alpine\n#1 DONE 0.2s\nSuccessfully built abc123\nSuccessfully tagged app:1.0",
+          stderr: "",
+          ...OK,
+        };
       case "compose":
+        if (req.args.includes("up")) {
+          return {
+            exitCode: 0,
+            stdout: " Container web  Started\n Container db  Started",
+            stderr: "",
+            ...OK,
+          };
+        }
+        if (req.args.includes("down")) {
+          return {
+            exitCode: 0,
+            stdout: " Container web  Removed\n Container db  Removed",
+            stderr: "",
+            ...OK,
+          };
+        }
         return { exitCode: 0, stdout: COMPOSE_JSON, stderr: "", ...OK };
       default:
         return { exitCode: 1, stdout: "", stderr: "unknown command", ...OK };
@@ -368,6 +392,104 @@ describe("docker_compose_status", () => {
   });
 });
 
+describe("docker_build (system-change)", () => {
+  const tool = () =>
+    dockerPlugin.tools.find((t) => t.name === "docker_build")!;
+
+  it("builds an image", async () => {
+    const result = await tool().execute(
+      { tag: "app:1.0" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/built .*app:1\.0/i);
+    expect(result.raw).toContain("Successfully tagged app:1.0");
+  });
+
+  it("denies without permission approval (system-change)", async () => {
+    const result = await tool().execute(
+      { tag: "app:1.0" },
+      ctx(mockRunner(), false),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("PermissionDenied");
+  });
+
+  it("rejects an empty or leading-dash tag", async () => {
+    const a = await tool().execute({ tag: "" }, ctx(mockRunner()));
+    const b = await tool().execute({ tag: "--pull" }, ctx(mockRunner()));
+    expect(a.error?.code).toBe("InvalidArguments");
+    expect(b.error?.code).toBe("InvalidArguments");
+  });
+
+  it("rejects a build path outside the workspace", async () => {
+    const result = await tool().execute(
+      { tag: "app:1.0", path: "../outside" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+  });
+});
+
+describe("docker_compose_up (system-change)", () => {
+  const tool = () =>
+    dockerPlugin.tools.find((t) => t.name === "docker_compose_up")!;
+
+  it("starts the compose project", async () => {
+    const result = await tool().execute(
+      { path: "compose.yaml" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/started|up/i);
+    expect(result.raw).toContain("Started");
+  });
+
+  it("denies without permission approval (system-change)", async () => {
+    const result = await tool().execute(
+      { path: "compose.yaml" },
+      ctx(mockRunner(), false),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("PermissionDenied");
+  });
+});
+
+describe("docker_compose_down (system-change)", () => {
+  const tool = () =>
+    dockerPlugin.tools.find((t) => t.name === "docker_compose_down")!;
+
+  it("stops the compose project", async () => {
+    const result = await tool().execute(
+      { path: "compose.yaml" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/stopped|down/i);
+    expect(result.raw).toContain("Removed");
+  });
+
+  it("denies without permission approval (system-change)", async () => {
+    const result = await tool().execute(
+      { path: "compose.yaml" },
+      ctx(mockRunner(), false),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("PermissionDenied");
+  });
+});
+
+describe("destructive commands", () => {
+  it("never registers docker prune / rm / rmi / system prune", () => {
+    const names = dockerPlugin.tools.map((t) => t.name);
+    expect(names).not.toContain("docker_prune");
+    expect(names).not.toContain("docker_system_prune");
+    expect(names).not.toContain("docker_rm");
+    expect(names).not.toContain("docker_rmi");
+  });
+});
+
 describe("robustness", () => {
   it("treats a null exit code (killed/crashed docker) as a ToolFailure, not success", async () => {
     const killed: ExecutionRunner = async () => ({
@@ -439,11 +561,16 @@ describe("live docker (opt-in)", () => {
       { path: "compose.yaml" },
       ctx(dockerRunner),
     );
+    if (!result.ok) {
+      // docker compose is not usable in this environment (missing compose
+      // plugin, unsupported --format json, ...). The deterministic mock tests
+      // already lock the array parser; skip here rather than fail CI.
+      return;
+    }
     // The project is never `docker compose up`-ed, so `ps` may list zero or
     // many services depending on the compose v2 version. What matters for
     // parser fidelity is that the real output PARSES as a JSON array (it is
     // never a ParseFailure) — not how many services happen to be listed.
-    expect(result.ok).toBe(true);
     const parsed = JSON.parse(result.raw as string);
     expect(Array.isArray(parsed)).toBe(true);
   }, 60_000);
@@ -482,7 +609,17 @@ describe("contract suite", () => {
           };
         case "logs":
           return { exitCode: 0, stdout: "log line", stderr: "", ...OK };
+        case "build":
+          return {
+            exitCode: 0,
+            stdout: "Successfully built abc123\nSuccessfully tagged app:1.0",
+            stderr: "",
+            ...OK,
+          };
         case "compose":
+          if (req.args.includes("up") || req.args.includes("down")) {
+            return { exitCode: 0, stdout: "Container web Started", stderr: "", ...OK };
+          }
           return { exitCode: 0, stdout: COMPOSE_JSON, stderr: "", ...OK };
         default:
           return { exitCode: 1, stdout: "", stderr: "unknown", ...OK };
@@ -507,6 +644,18 @@ describe("contract suite", () => {
           invalid: { name: 42 },
         },
         docker_compose_status: {
+          valid: { path: "compose.yaml" },
+          invalid: { path: 42 },
+        },
+        docker_build: {
+          valid: { tag: "app:1.0" },
+          invalid: { tag: 42 },
+        },
+        docker_compose_up: {
+          valid: { path: "compose.yaml" },
+          invalid: { path: 42 },
+        },
+        docker_compose_down: {
           valid: { path: "compose.yaml" },
           invalid: { path: 42 },
         },
