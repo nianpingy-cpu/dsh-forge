@@ -88,7 +88,7 @@ Python 环境与依赖管理。
 
 ## 12. Vision — 识图、数据分析与图表
 
-面向开发者的图像与数据分析工具：检查 UI 截图并返回结构化的尺寸、对比度与配色诊断；分析客户发来的简单 CSV/JSON 数据；生成 SVG 图表写入工作区。工具：`vision_inspect`、`data_analyze`、`chart_generate`。
+面向开发者的图像与数据分析工具：检查 UI 截图并返回结构化的尺寸、对比度与配色诊断；分析客户发来的简单 CSV/JSON 数据；生成 SVG 图表写入工作区。工具：`vision_inspect`、`data_analyze`、`chart_generate`。安装与新手教程见 `packages/plugin-vision/README.md`。
 
 ---
 

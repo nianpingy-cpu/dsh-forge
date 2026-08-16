@@ -1,9 +1,83 @@
 # @dsh-forge/plugin-vision
 
-Vision, data analysis & chart tools for DeepSeek Harness: inspect a UI
-screenshot with structural heuristics, analyze a CSV/JSON data file, and
-generate charts as SVG files in the workspace. Fully offline and deterministic
-— the engine is a committed Node script executed with typed argv (no shell).
+面向 DeepSeek Harness 的「看图 + 分析数据 + 画图表」工具包：检查 UI 截图并指出明显问题、总结客户发来的 CSV/JSON 数据、生成 SVG 图表写入工作区。全部离线、确定、无需联网，也不需要额外安装任何二进制。
+
+## 新手快速上手（小白教程）
+
+不会用？跟着下面三步走，10 分钟就能跑通。
+
+### 第 0 步：确认环境
+
+- 需要 Node.js **22.19 或更高**（终端里运行 `node --version` 查看）。
+- 推荐用 pnpm（`pnpm --version` 查看；没有就先 `npm install -g pnpm`）。
+
+### 第 1 步：安装
+
+在项目根目录运行：
+
+```bash
+pnpm add @dsh-forge/plugin-vision
+```
+
+安装后你会获得 3 个工具：`vision_inspect`（识图）、`data_analyze`（数据分析）、`chart_generate`（图表）。
+
+### 第 2 步：逐个试一遍
+
+**① 识图：`vision_inspect`**
+
+把一张 UI 截图放进项目，然后让 AI 调用：
+
+```text
+vision_inspect(input: "screenshot.png")
+```
+
+它会告诉你：图片格式、尺寸、宽高比、对比度，以及明显的视觉问题提示（如图片太小文字看不清、对比度低、整张图偏暗、是灰度图等）。
+
+**② 数据分析：`data_analyze`**
+
+把客户发来的 CSV（或 JSON）文件放进项目：
+
+```text
+data_analyze(data: "sales.csv")
+```
+
+它会返回：一共几行几列、每列是什么类型、数值列的最小/最大/平均/总和、哪些列有缺失值等。
+
+**③ 画图表：`chart_generate`**
+
+基于同一个数据文件直接生成图表：
+
+```text
+chart_generate(data: "sales.csv", type: "bar", title: "月度销量", output: "sales.svg")
+```
+
+生成后项目里会多出一个 `sales.svg` 文件，用浏览器双击打开即可查看。图表类型支持 `bar` / `line` / `pie` / `area` / `scatter`。
+
+### 第 3 步：串起来的完整流程
+
+一个典型的日常例子——「看设计稿 → 分析客户数据 → 出图表」：
+
+```text
+vision_inspect(input: "home-design.png")
+  → 返回“图片过小，文字可能看不清”等诊断
+data_analyze(data: "sales.csv")
+  → 返回 6 行 × 4 列，sales 列均值 1416.67
+chart_generate(data: "sales.csv", type: "bar", title: "月度销量", output: "sales.svg")
+  → 生成 sales.svg 图表
+```
+
+### 常见问题（FAQ）
+
+- **提示 `BinaryNotFound`？** 说明插件的运行脚本没装全，重新执行一次 `pnpm add @dsh-forge/plugin-vision` 即可。
+- **提示 `ToolFailure` 说不支持格式？** `vision_inspect` 目前支持 PNG / JPEG / WebP / GIF / BMP，请确认图片格式。
+- **生成的 `.svg` 打不开？** 用浏览器（Chrome / Edge / Firefox）打开，不是用文本编辑器。
+- **为什么 `chart_generate` 要权限？** 因为它会在项目里写文件（属于「写」操作），需要授权；默认不会覆盖已有文件，除非显式设置 `overwrite: true`。
+
+---
+
+# 技术参考（进阶）
+
+以下内容供需要深入了解的开发者参考。
 
 ## Installation
 
