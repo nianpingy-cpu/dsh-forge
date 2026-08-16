@@ -1,536 +1,138 @@
 # DSH Forge
 
-> **Turn developer CLIs into typed, safe and structured tools for DeepSeek Harness.**  
-> 让 DeepSeek Harness 不只是“会写代码”，还能够安全地调用真实开发工具，完成检查、修复、验证与自动化执行。
-
-DSH Forge 是一个面向 **DeepSeek Harness** 的开发者工具插件生态。
-
-它把成熟的开发者 CLI 工具封装成 **类型安全（Typed）**、**权限可控（Safe）**、**结果结构化（Structured）**、**可验证（Verifiable）** 的 Agent Tools，让智能体能够完成：
+DSH Forge 是一组面向 DeepSeek Harness 的开发者工具插件。它把成熟的 CLI 工具封装成类型安全、权限可控、结果结构化的 Agent Tools，让智能体可以调用真实的开发工具完成检查、修复、验证与自动化执行，而不是直接拼 Shell 命令。
 
 ```text
-Understand
-   ↓
-Search
-   ↓
-Modify
-   ↓
-Lint / Format
-   ↓
-Test / CI
-   ↓
-Security Scan
-   ↓
-Container / Performance
-   ↓
-Verify
+Understand → Search → Modify → Lint/Format → Test/CI → Security → Container/Perf → Verify
 ```
 
-核心目标不是“让模型执行更多 Shell 命令”，而是建立一层真正适合智能体调用的：
-
-> **Developer Tool Adapter Layer**
+DSH Forge 提供的是开发者工具与 DeepSeek Harness 之间的一层适配层（Adapter Layer），核心目标是把工具调用约束在类型化参数、工作区边界与权限模型之内。
 
 ---
 
-## ✨ Why DSH Forge?
-
-传统 Coding Agent 常见的工具调用方式是：
-
-```text
-LLM
- ↓
-Shell command
- ↓
-Raw terminal output
- ↓
-LLM guesses what happened
-```
-
-这种方式存在几个问题：
-
-- 命令参数缺少强约束
-- 容易暴露任意 Shell 执行能力
-- CLI 输出可能非常长且难以解析
-- 文件修改、网络访问和系统操作缺少统一权限分类
-- 很难形成稳定的“修复 → 再验证”闭环
-
-DSH Forge 将这一过程改造成：
-
-```text
-DeepSeek Harness
-      ↓
-Typed Tool
-      ↓
-Safe Adapter
-      ↓
-Structured Execution
-      ↓
-Normalized Result
-      ↓
-Agent Reasoning
-      ↓
-Fix / Retry / Verify
-```
-
----
-
-## 🚀 Current Status
+## Current Status
 
 **Current release: `v1.0.0`**
 
-目前已经完成：
-
-- **11 个核心插件**
-- **1 个统一 Core SDK**
-- **1 套 Quality & Security Gate**
-- **7 个 Presets**
-- **500+ automated tests**
-- **Ubuntu / Windows CI**
-- **DeepSeek Harness compatibility matrix**
-- **Supply-chain / release hardening**
-- **Issue-driven + TDD development**
-- **Independent external-model PR review**
-- **GitHub Releases: v0.1.0 / v0.2.0 / v0.3.0 / v1.0.0**
+- 11 个核心插件
+- 1 个统一 Core SDK
+- 1 套 Quality & Security Gate
+- 7 个 Presets
+- 500+ automated tests
+- Ubuntu / Windows CI
+- DeepSeek Harness compatibility matrix
+- Supply-chain / release hardening
+- GitHub Releases: v0.1.0 / v0.2.0 / v0.3.0 / v1.0.0
 
 ---
 
-# 🧩 Plugin Ecosystem
+# Plugin Ecosystem
 
 ## 1. ast-grep — Structural Code Search & Rewrite
 
-让 DeepSeek 不再只能依赖文本搜索，而是可以基于 AST 理解和修改代码结构。
+基于 AST 的代码搜索与批量改写，支持 JS/TS/JSX/TSX/Python。
 
-主要能力：
-
-- 结构化代码搜索
-- AST Pattern Scan
-- 规则检查
-- 批量代码 Rewrite
-- API Migration
-- 重构场景支持
-
-示例：
-
-```text
-Find all deprecated API calls
-        ↓
-ast-grep search
-        ↓
-Locate structural matches
-        ↓
-Rewrite
-        ↓
-Rescan
-```
-
----
+能力：结构化搜索、规则检查、批量 Rewrite、API Migration、重构。
 
 ## 2. Ruff — Python Quality
 
-为 Python 项目提供高速代码质量检查和格式化能力。
+Python 代码质量检查与格式化。
 
-支持：
-
-- `ruff_check`
-- `ruff_format_check`
-- `ruff_explain`
-- `ruff_fix`
-- `ruff_format`
-
-典型流程：
-
-```text
-ruff_check
-   ↓
-12 diagnostics
-   ↓
-DeepSeek reasons
-   ↓
-ruff_fix
-   ↓
-ruff_check
-   ↓
-0 errors
-```
-
----
+工具：`ruff_check`、`ruff_format_check`、`ruff_explain`、`ruff_fix`、`ruff_format`。
 
 ## 3. Biome — Web / JS / TS Quality
 
-面向：
+面向 JavaScript / TypeScript / JSX / TSX / JSON 的 Lint 与 Format。
 
-- JavaScript
-- TypeScript
-- JSX
-- TSX
-- JSON
-
-提供：
-
-- Lint
-- Format Check
-- Fix
-- Format
-
-可作为 Web 生态中与 Ruff 对应的代码质量工具。
-
----
+工具：`biome_check`、`biome_lint`、`biome_format_check`、`biome_fix`、`biome_format`。
 
 ## 4. uv — Python Environment & Dependency Management
 
-帮助 Agent 管理 Python 项目环境和依赖。
+Python 环境与依赖管理。
 
-支持：
-
-- 依赖同步
-- 依赖树查看
-- 添加依赖
-- 删除依赖
-- 运行 Python 命令
-- 项目环境管理
-
-解决 Coding Agent 常见问题：
-
-> “代码写好了，但环境跑不起来。”
-
----
+能力：依赖同步、依赖树查看、添加/移除依赖、运行命令、项目环境管理。
 
 ## 5. act — Local GitHub Actions
 
-让 DeepSeek 能够在本地执行 GitHub Actions 工作流。
+在本地执行 GitHub Actions 工作流。
 
-支持：
-
-- Workflow discovery
-- Job discovery
-- Local workflow run
-- Job execution
-- Failure status
-- CI result analysis
-
-流程：
-
-```text
-Modify code
-   ↓
-Run GitHub Actions locally
-   ↓
-Failure
-   ↓
-Analyze
-   ↓
-Fix
-   ↓
-Run again
-   ↓
-PASS
-```
-
----
+能力：Workflow/Job 发现、本地运行、失败状态与 CI 结果分析。
 
 ## 6. Semgrep — Source Code Security
 
-提供源码级静态安全分析。
+源码级静态安全分析，输出结构化 findings。
 
-支持：
-
-- Repository Scan
-- File Scan
-- Security Rules
-- Structured Findings
-- Source-code vulnerability detection
-
-适用于：
-
-- Unsafe API usage
-- Injection risk
-- Dangerous coding patterns
-- Security regression checking
-
----
+工具：`semgrep_scan`、`semgrep_scan_file`、`semgrep_ruleset`、`semgrep_security_scan`。
 
 ## 7. Trivy — Supply Chain & Container Security
 
-覆盖更加广泛的软件供应链安全能力：
+供应链与容器安全：文件系统、镜像、IaC/配置、密钥、漏洞与 SBOM。
 
-- Filesystem scan
-- Container image scan
-- IaC / configuration scan
-- Secret detection
-- Vulnerability detection
-- SBOM
-
-主要能力：
-
-```text
-trivy_repo_scan
-trivy_config_scan
-trivy_secret_scan
-trivy_image_scan
-trivy_sbom
-```
-
----
+工具：`trivy_repo_scan`、`trivy_config_scan`、`trivy_secret_scan`、`trivy_image_scan`、`trivy_sbom`。
 
 ## 8. Quality & Security Gate
 
-Quality Gate 不是重新实现 Ruff、Biome、Semgrep 或 Trivy。
-
-它负责将多个工具组合成一个统一检查流程：
-
-```text
-Detect project
-      ↓
-Ruff / Biome
-      ↓
-Semgrep
-      ↓
-Trivy
-      ↓
-Normalized Result
-```
-
-最终输出：
-
-```text
-PASS
-PASS_WITH_WARNINGS
-FAIL
-```
-
-让 Agent 能快速判断当前项目是否达到质量门槛。
-
----
+把 Ruff / Biome / Semgrep / Trivy 组合成一个统一检查流程，输出 `PASS` / `PASS_WITH_WARNINGS` / `FAIL`，让 Agent 快速判断项目是否达到质量门槛。工具：`quality_gate`、`quality_gate_status`。
 
 ## 9. Docker — Container Operations
 
-将常见 Docker 操作转换为类型化、权限可控的 Agent Tools。
-
-支持读取：
-
-- Docker status
-- Containers
-- Images
-- Logs
-- Inspect
-- Compose status
-
-支持受控写操作：
-
-- Build
-- Compose up
-- Compose down
-
-高风险操作不会被简单暴露为任意 Shell。
-
----
+类型化、权限可控的 Docker 操作。读取：status/containers/images/logs/inspect/compose status；受控写：build、compose up/down。高风险操作不会暴露为任意 Shell。
 
 ## 10. k6 — Performance & Load Testing
 
-让 Agent 能够直接执行：
-
-- Smoke Test
-- Load Test
-- Stress Test
-- Threshold Check
-- Performance Summary
-
-示例：
-
-```text
-Start service
-   ↓
-k6 load test
-   ↓
-P95 too high
-   ↓
-Analyze bottleneck
-   ↓
-Optimize
-   ↓
-Run again
-```
-
----
+性能与负载测试。工具：`k6_version`、`k6_run`、`k6_smoke`、`k6_load`、`k6_stress`、`k6_summary`、`k6_threshold_check`。
 
 ## 11. FFmpeg — Media Operations
 
-将复杂 FFmpeg 命令转换成高层、类型化操作。
-
-支持：
-
-- Media probe
-- Video clip
-- Transcode
-- Concat
-- Audio extract
-- Audio convert
-- Thumbnail generation
-- Compression
-
-例如：
-
-```text
-Probe video
-   ↓
-Clip segment
-   ↓
-Compress
-   ↓
-Verify output
-```
-
-而不是让模型拼接任意 FFmpeg Shell 命令。
+把 FFmpeg 命令封装成高层类型化操作：probe、clip、transcode、concat、audio、thumbnail、compress，而不是让模型拼接任意 FFmpeg Shell 命令。
 
 ---
 
-# 📦 Presets
+# Presets
 
-为了避免用户逐个配置插件，DSH Forge 提供组合式 Presets。
+避免逐个配置插件，DSH Forge 提供组合式 Presets：
 
-## Coding
-
-```text
-ast-grep
-Ruff
-Biome
-```
-
-适合一般软件开发与重构。
-
-## Python
-
-```text
-Ruff
-uv
-```
-
-适合 Python 项目。
-
-## Web
-
-```text
-Biome
-ast-grep
-```
-
-适合 JavaScript / TypeScript 项目。
-
-## Security
-
-```text
-Semgrep
-Trivy
-Quality Gate
-```
-
-适合安全扫描与质量门禁。
-
-## DevOps
-
-```text
-act
-Docker
-k6
-```
-
-适合 CI/CD、容器和性能验证。
-
-## Media
-
-```text
-FFmpeg
-```
-
-适合多媒体任务。
-
-## Full
-
-加载完整 DSH Forge 工具生态。
+| Preset | 插件 | 适用 |
+|---|---|---|
+| coding | ast-grep, Ruff, Biome | 一般开发与重构 |
+| python | Ruff, uv | Python 项目 |
+| web | Biome, ast-grep | JS/TS 项目 |
+| security | Semgrep, Trivy, Quality Gate | 安全扫描与门禁 |
+| devops | act, Docker, k6 | CI/CD、容器与性能 |
+| media | FFmpeg | 多媒体 |
+| full | 全部插件 | 完整工具生态 |
 
 ---
 
-# 🛡️ Safety by Design
+# Safety by Design
 
-DSH Forge 的核心理念不是“执行更多命令”，而是：
-
-> **让智能体以更受控的方式调用开发者工具。**
+DSH Forge 的目标是让工具以更受控的方式被调用，而不是执行更多命令。
 
 ## Typed Arguments
 
-避免：
+参数经过显式 Schema 验证，避免 `command: "some arbitrary shell..."` 这类自由字符串：
 
 ```text
-command: "some arbitrary shell..."
+tool({ file, rule, options })
 ```
-
-而使用：
-
-```text
-tool({
-  file,
-  rule,
-  options
-})
-```
-
-参数经过显式 Schema 验证。
-
----
 
 ## No Arbitrary Shell
 
-默认采用：
-
-```text
-binary + argv[]
-```
-
-而不是：
-
-```text
-shell=true
-```
-
-避免把任意 Shell 权限直接交给 Agent。
-
----
+默认采用 `binary + argv[]`，而不是 `shell=true`，避免把任意 Shell 权限直接交给 Agent。
 
 ## Workspace Boundary
 
-写操作默认必须限制在当前 Workspace 中。
-
-默认阻止：
-
-- `../` Path Traversal
-- Absolute path escape
-- Symlink escape
-
-避免智能体误修改工作区以外的文件。
-
----
+写操作默认限制在当前 Workspace 内，阻止 `../` 路径穿越、绝对路径逃逸与符号链接逃逸。
 
 ## Mutation Classification
 
-工具按照副作用被分类为：
-
-```text
-read
-workspace-write
-network
-process
-system-change
-destructive
-```
-
-为 DeepSeek Harness 的权限系统提供明确的操作语义。
+工具按副作用分类：`read` / `workspace-write` / `network` / `process` / `system-change` / `destructive`，为权限系统提供明确语义。
 
 ---
 
-# 📊 Structured Results
+# Structured Results
 
-传统 CLI 可能一次返回几百甚至几千行终端文本。
-
-DSH Forge 尽量将工具结果转换为统一的结构化诊断：
+DSH Forge 将工具结果归一化为结构化诊断，而不是让 Agent 从大段终端文本中猜测：
 
 ```ts
 interface Diagnostic {
@@ -546,197 +148,58 @@ interface Diagnostic {
 }
 ```
 
-Agent 因此可以直接理解：
-
-- 出了什么问题
-- 在哪个文件
-- 哪一行
-- 严重程度
-- 是否可以自动修复
-
-而不必重新从一大段终端输出中猜测。
+Agent 可以直接读到问题类型、文件、行号、严重程度与是否可自动修复。
 
 ---
 
-# 🔁 Agent Development Loop
+# Engineering Quality
 
-DSH Forge 希望帮助 DeepSeek Harness 从：
+开发遵循 Issue-driven + TDD 流程：Issue → TDD RED → GREEN → Refactor → PR → CI → Review → Merge。
 
-> **“能够生成代码”**
-
-进一步变成：
-
-> **“能够调用工具验证自己工作的开发智能体”**
-
-完整闭环：
-
-```text
-Understand
-    ↓
-Search
-    ↓
-Modify
-    ↓
-Lint
-    ↓
-Format
-    ↓
-Test / CI
-    ↓
-Security
-    ↓
-Performance
-    ↓
-Verify
-```
-
-即：
-
-> **Reason → Fix → Retry → Verify**
+工程质量信号：500+ tests、TypeScript typecheck、Lint/Build 验证、Ubuntu/Windows CI、确定性 E2E、插件契约测试、真实工具集成测试、独立外部模型评审、版本化 GitHub Releases。
 
 ---
 
-# 🧪 Engineering Quality
-
-DSH Forge 本身按照真实开源软件工程流程开发。
-
-开发流程：
+# Architecture
 
 ```text
-Issue
- ↓
-TDD RED
- ↓
-TDD GREEN
- ↓
-Refactor
- ↓
-Pull Request
- ↓
-CI
- ↓
-Independent Model Review
- ↓
-Regression Test
- ↓
-Merge
-```
-
-目前工程质量信号包括：
-
-- 471+ tests passing
-- TypeScript typecheck
-- Lint / Build verification
-- Ubuntu CI
-- Windows CI
-- Deterministic E2E
-- Plugin contract tests
-- Real tool integration tests
-- Independent external-model PR reviews
-- Versioned GitHub releases
-
----
-
-# 🏗 Architecture
-
-```text
-                        User Intent
-                            │
-                            ▼
-                   DeepSeek Harness
-                            │
-                       Typed Tools
-                            │
-                            ▼
-                     ┌───────────┐
-                     │ DSH Forge │
-                     └───────────┘
-                            │
-           ┌────────────────┼────────────────┐
-           │                │                │
-           ▼                ▼                ▼
-     Argument          Permission        Workspace
-     Validation          Policy           Boundary
-           │                │                │
-           └────────────────┼────────────────┘
-                            │
-                            ▼
-                       Safe Adapter
-                            │
-       ┌──────────┬─────────┼──────────┬──────────┐
-       ▼          ▼         ▼          ▼          ▼
-    ast-grep    Ruff     Semgrep     Docker     FFmpeg
-      Biome      uv       Trivy       act        k6
-                            │
-                            ▼
-                    Structured Result
-                            │
-                            ▼
-                   Reason / Fix / Verify
+DeepSeek Harness
+      ↓ Typed Tools
+      ┌───────────┐
+      │ DSH Forge │
+      └───────────┘
+    ├ Argument Validation ├ Permission Policy ├ Workspace Boundary ┤
+      ↓ Safe Adapter
+      ast-grep · Ruff · Biome · uv · act · Semgrep · Trivy · Docker · k6 · FFmpeg
+      ↓ Structured Result
+      Reason / Fix / Verify
 ```
 
 ---
 
-# 🗺 Roadmap
+# Roadmap
 
 ## v0.1.0
 
-- Core SDK
-- ast-grep
-- Ruff
-- Biome
-- Basic presets
-- E2E foundation
+Core SDK · ast-grep · Ruff · Biome · Basic presets · E2E foundation
 
 ## v0.2.0
 
-- uv
-- act
-- Semgrep
-- Trivy
-- Quality & Security Gate
-- Security / DevOps presets
+uv · act · Semgrep · Trivy · Quality & Security Gate · Security/DevOps presets
 
 ## v0.3.0
 
-- Docker
-- k6
-- FFmpeg
-- Full preset system
-- Full E2E stories
+Docker · k6 · FFmpeg · Full preset system · Full E2E stories
 
 ## v1.0.0
 
-- DeepSeek Harness compatibility matrix (Pinned + Latest lanes)
-- Per-plugin documentation and six example guides
-- Supply-chain and release hardening (secret scan, SBOM, checksums, licenses)
-- Stable public contracts (core API, Diagnostic schema, permission model)
+DeepSeek Harness compatibility matrix · Per-plugin documentation + examples · Supply-chain/release hardening · Stable public contracts
 
 ---
 
-# 🧭 Project Philosophy
+# Contributing
 
-DSH Forge is **not**:
-
-> a collection of shell wrappers.
-
-DSH Forge aims to be:
-
-> **a Developer Tool Adapter Layer for DeepSeek Harness.**
-
-We want mature developer tools to become:
-
-**Typed · Safe · Structured · Verifiable**
-
-agent capabilities.
-
----
-
-# 🤝 Contributing
-
-Contributions are welcome.
-
-Before contributing, please read:
+Contributions are welcome. Before contributing, please read:
 
 - `CONTRIBUTING.md`
 - `AGENTS.md`
@@ -744,28 +207,8 @@ Before contributing, please read:
 - `docs/ARCHITECTURE.md`
 - `docs/PLUGIN_STANDARD.md`
 
-The project follows an Issue-driven and TDD-first development workflow.
-
 ---
 
-# 📄 License
+# License
 
-MIT
-
-Third-party tools remain governed by their respective upstream licenses.
-
-DSH Forge acts primarily as an adapter layer and does not treat upstream tools as reimplemented project code.
-
----
-
-# ⭐ Support
-
-If DSH Forge is useful to you:
-
-- Star the repository
-- Try the plugins
-- Report issues
-- Suggest new developer-tool adapters
-- Contribute a new plugin
-
-> **Forge better tools for DeepSeek Harness.**
+MIT. Third-party tools remain governed by their respective upstream licenses. DSH Forge is an adapter layer and does not treat upstream tools as reimplemented project code.
