@@ -2,11 +2,16 @@
 
 Current Version: 1.0.0 (V1.0.0 published — tag v1.0.0)
 Current Milestone: V1.0.0 (complete)
-Current Issue: ISSUE-062 IN PROGRESS — Vision, data analysis & chart plugin
-Current Branch: V0.1.0/issue-062-vision-data-chart
+Current Issue: ISSUE-062 MERGED — Vision, data analysis & chart plugin
+Current Branch: main
 
 ## Completed (merged + closed with evidence)
 
+- **ISSUE-062 Vision, data analysis & chart plugin** (PR #63, 3 review rounds,
+  approve conf 0.75): `@dsh-forge/plugin-vision` with `vision_inspect`
+  (structural image heuristics), `data_analyze` (CSV/JSON analysis) and
+  `chart_generate` (SVG charts, workspace-write); deterministic offline worker,
+  full preset + docs + example integration
 - ISSUE-001 bootstrap repository (PR #31)
 - ISSUE-002 upstream compatibility lock
 - ISSUE-003 architecture standard
