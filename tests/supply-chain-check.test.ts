@@ -16,6 +16,7 @@ import {
   parseLockfileDeps,
   uuidFromStamp,
   runCli,
+  buildReport,
   SECRET_PATTERNS,
 } from "../scripts/supply-chain-check.js";
 
@@ -195,17 +196,35 @@ describe("supply-chain-check", () => {
 });
 
 describe("supply-chain-check CLI", () => {
-  it("exits non-zero when the workspace is not built (fail-closed gate)", () => {
-    // The CLI runs against the real repo; we only assert the contract: with
-    // no dist/ artifacts present it must fail (a release gate must not pass
-    // vacuously). We can't rely on the repo being built in this test, so we
-    // assert the exit code is 0 or 1 but never an ambiguous skip — and that
-    // the function returns a number (0 only when fully built).
+  it("returns exit code 0 iff the workspace report is fully ok", () => {
+    // The CLI's exit code must be a strict projection of the report: 0 only
+    // when every package passes, 1 otherwise. This is the contract the CI
+    // gate enforces and must never become a tautology.
     const code = runCli();
-    expect(typeof code).toBe("number");
-    expect(code === 0 || code === 1).toBe(true);
-    if (code === 1) {
-      console.log("(cli) repo not fully built in test env; gate correctly fails closed");
+    const report = buildReport(".");
+    expect(code).toBe(report.ok ? 0 : 1);
+  });
+
+  it("covers every built workspace package (core, all plugins, presets)", () => {
+    const report = buildReport(".");
+    expect(report.packages.length).toBeGreaterThanOrEqual(12);
+    const names = report.packages.map((p) => p.name);
+    expect(names).toContain("@dsh-forge/core");
+    expect(names).toContain("@dsh-forge/presets");
+    for (const plugin of [
+      "ast-grep",
+      "ruff",
+      "biome",
+      "uv",
+      "act",
+      "semgrep",
+      "trivy",
+      "docker",
+      "k6",
+      "ffmpeg",
+      "quality-gate",
+    ]) {
+      expect(names).toContain(`@dsh-forge/plugin-${plugin}`);
     }
   });
 });

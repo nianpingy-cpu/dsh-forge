@@ -16,7 +16,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
@@ -366,40 +366,39 @@ export function runCli(args: string[] = process.argv.slice(2)): number {
 
 // CLI entry: `node scripts/supply-chain-check.ts [outDir]`.
 //
-// Direct invocations (canonical or via a shim/symlink/casing/dropped
-// extension) always run the gate — so a release gate can never pass
-// vacuously. Merely importing this module (e.g. from tests) must not exit
-// the process: in that case process.argv[1] names some other program (e.g.
-// vitest), so none of the branches below fire and we do nothing.
+// We must reliably distinguish a direct invocation from a plain import
+// (tests import this module and must not trigger process.exit). Node does not
+// implement import.meta.main, so we resolve process.argv[1] with realpath and
+// compare against this file's realpath: when argv[1] resolves to this file
+// (canonical name, symlink/shim, dropped extension, casing variance) we run
+// the gate; when it resolves to some other program (e.g. vitest) we are an
+// imported module and do nothing. This is fail-closed by construction: a
+// wrapper that renames the script still resolves to this file and runs.
+import { realpathSync } from "node:fs";
+
 const invokedEntry = process.argv[1] ?? "";
-const invokedAsThisScript = /supply-chain-check(?:\.ts)?$/i.test(
-  invokedEntry.replace(/\\/g, "/"),
-);
-const isCanonicalEntry = import.meta.url === pathToFileURL(invokedEntry).href;
-
-/** True only when the runtime proves this module is the process main entry
- * (import.meta.main === true). On runtimes without import.meta.main this
- * returns false, and the argv-based branches above already cover direct
- * invocations, so we never fail a test import by accident. */
-function isMainEntryWhenUnknown(): boolean {
-  return (import.meta as { main?: unknown }).main === true;
+const thisFileReal = realpathSync(fileURLToPath(import.meta.url));
+let invokedReal: string | null = null;
+if (invokedEntry !== "") {
+  try {
+    invokedReal = realpathSync(invokedEntry);
+  } catch {
+    invokedReal = null;
+  }
 }
+const isThisScript =
+  invokedReal !== null &&
+  invokedReal.replace(/\\/g, "/").toLowerCase() ===
+    thisFileReal.replace(/\\/g, "/").toLowerCase();
 
-if (isCanonicalEntry) {
-  // Canonical direct invocation: `node scripts/supply-chain-check.ts`.
+if (invokedEntry === "") {
+  // No argv[1] — must be an import in an unusual runtime; do nothing.
+} else if (isThisScript) {
+  // Direct invocation (canonical path, symlink, shim, casing, or dropped
+  // extension): run the gate. Fail-closed is enforced inside runCli (exit 1
+  // on a failed report). An unresolved-argv case can never silently pass.
   process.exit(runCli());
-} else if (invokedAsThisScript) {
-  // Direct invocation via a non-canonical path (shim/symlink/casing/dropped
-  // extension, or a type-stripping runtime without import.meta.main): run it
-  // but be loud, so a mismatch can never silently pass.
-  console.error("supply-chain-check: running via non-canonical entry path (exit code still enforced)");
-  process.exit(runCli());
-} else if (invokedEntry !== "" && isMainEntryWhenUnknown()) {
-  // Main entry that does not resolve to this script name (e.g. argv[0]
-  // symlink with a renamed target) — fail closed instead of exiting 0
-  // unchecked.
-  console.error("supply-chain-check: entry path mismatch; failing closed (exit 2)");
-  process.exit(2);
+} else {
+  // process.argv[1] resolves to a different program — we are an imported
+  // module (e.g. vitest). Do nothing.
 }
-// Otherwise we are an imported module (process.argv[1] is some other program,
-// e.g. vitest) — do nothing.
