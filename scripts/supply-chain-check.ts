@@ -60,28 +60,35 @@ function filesUnder(dir: string): string[] {
 
 export interface SecretScanResult {
   ok: boolean;
+  /** true when a dist/ tree existed and was actually scanned. */
+  built: boolean;
   findings: { file: string; pattern: string }[];
 }
 
-/** Scan built artifacts for secret-like values. */
+/** Scan built artifacts for secret-like values. Missing dist fails closed. */
 export function scanSecrets(dir: string): SecretScanResult {
   const findings: SecretScanResult["findings"] = [];
   const dist = join(dir, "dist");
-  if (existsSync(dist)) {
-    for (const file of filesUnder(dist)) {
-      const content = readFileSync(join(dist, file), "utf8");
-      for (const pattern of SECRET_PATTERNS) {
-        if (pattern.test(content)) {
-          findings.push({ file, pattern: pattern.source });
-        }
+  if (!existsSync(dist)) {
+    // Fail closed: an unbuilt package means nothing was scanned. A release
+    // gate must not pass when there is no artifact to inspect.
+    return { ok: false, built: false, findings };
+  }
+  for (const file of filesUnder(dist)) {
+    const content = readFileSync(join(dist, file), "utf8");
+    for (const pattern of SECRET_PATTERNS) {
+      if (pattern.test(content)) {
+        findings.push({ file, pattern: pattern.source });
       }
     }
   }
-  return { ok: findings.length === 0, findings };
+  return { ok: findings.length === 0, built: true, findings };
 }
 
 export interface ContentsCheckResult {
   ok: boolean;
+  /** true when a dist/ tree existed and was actually allow-listed. */
+  built: boolean;
   errors: string[];
 }
 
@@ -89,7 +96,10 @@ export interface ContentsCheckResult {
 export function checkContents(dir: string): ContentsCheckResult {
   const errors: string[] = [];
   const dist = join(dir, "dist");
-  if (!existsSync(dist)) return { ok: true, errors }; // not built this run
+  if (!existsSync(dist)) {
+    // Fail closed: a missing dist means there is nothing to allow-list.
+    return { ok: false, built: false, errors: ["dist is missing — run pnpm build first"] };
+  }
   const files = filesUnder(dist);
   if (files.length === 0) errors.push("dist is empty");
   for (const file of files) {
@@ -97,7 +107,7 @@ export function checkContents(dir: string): ContentsCheckResult {
       errors.push(`unexpected file in dist: ${file}`);
     }
   }
-  return { ok: errors.length === 0, errors };
+  return { ok: errors.length === 0, built: true, errors };
 }
 
 /** Recursively find committed binary artifacts (excluding tool dirs). */
@@ -323,9 +333,13 @@ function format(report: SupplyChainReport): string {
   return lines.join("\n");
 }
 
-// CLI entry: `node scripts/supply-chain-check.ts [outDir]`.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const outDir = process.argv[2] ? resolve(process.argv[2]) : join(ROOT, "compatibility", "reports");
+/**
+ * Run the supply-chain check end-to-end and return the process exit code.
+ * Exported so tests can drive the CLI path directly (including the
+ * exit-code contract) without spawning a subprocess.
+ */
+export function runCli(args: string[] = process.argv.slice(2)): number {
+  const outDir = args[0] ? resolve(args[0]) : join(ROOT, "compatibility", "reports");
   const report = buildReport(ROOT);
   const artifacts = writeArtifacts(report, outDir);
   report.sbomFile = artifacts.sbomFile;
@@ -333,5 +347,19 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   console.log(format(report));
   if (artifacts.sbomFile) console.log(`  sbom: ${artifacts.sbomFile}`);
   if (artifacts.checksumsFile) console.log(`  checksums: ${artifacts.checksumsFile}`);
-  process.exit(report.ok ? 0 : 1);
+  return report.ok ? 0 : 1;
+}
+
+// CLI entry: `node scripts/supply-chain-check.ts [outDir]`. When the entry
+// guard does not match (e.g. symlink/shim/windows path-casing variance) the
+// script must FAIL CLOSED (exit 2) rather than silently doing nothing, so a
+// release gate can never pass vacuously.
+const isDirectRun = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
+  process.exit(runCli());
+} else if (process.argv[1] !== undefined && process.argv[1].endsWith("supply-chain-check.ts")) {
+  // Path-casing/symlink variant of a direct invocation: still run, but be
+  // loud about it so a mismatch cannot silently pass.
+  console.error("supply-chain-check: running via non-canonical entry path (exit code still enforced)");
+  process.exit(runCli());
 }
