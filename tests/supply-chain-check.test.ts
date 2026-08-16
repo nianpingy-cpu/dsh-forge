@@ -152,6 +152,26 @@ describe("supply-chain-check", () => {
     }
   });
 
+  it("parses compact snapshot entries `name@version: {}` without corruption", () => {
+    const lockfile = [
+      "packages:",
+      "  '@bcoe/v8-coverage@1.0.2': {}",
+      "  'typescript@5.8.0':",
+      "    resolution: {integrity: sha512-ts}",
+      "snapshots:",
+      "  '@bcoe/v8-coverage@1.0.2': {}",
+      "",
+    ].join("\n");
+    const deps = parseLockfileDeps(lockfile);
+    expect(deps).toContainEqual({ name: "@bcoe/v8-coverage", version: "1.0.2" });
+    expect(deps).toContainEqual({ name: "typescript", version: "5.8.0" });
+    // The parser must stop at `snapshots:` and not consume its entries.
+    for (const d of deps) {
+      expect(d.version.endsWith(": {}")).toBe(false);
+      expect(d.version.includes("'")).toBe(false);
+    }
+  });
+
   it("generates a valid RFC 4122 v4-shaped UUID for the SBOM serialNumber", () => {
     const uuid = uuidFromStamp("2026-08-16T04-25-45-545Z");
     expect(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid)).toBe(true);

@@ -205,11 +205,20 @@ export function parseLockfileDeps(lockfileText: string): { name: string; version
       continue;
     }
     if (!inPackages) continue;
-    // Only exactly-two-space-indented entry lines (deeper indent = fields).
+    // Blank lines are separators; skip without terminating the section.
+    if (rawLine.trim() === "") continue;
+    // 0-indent line = the next top-level section (snapshots:, importers:,
+    // settings:, ...) — the packages section is over.
+    if (!/^\s/.test(rawLine)) {
+      inPackages = false;
+      continue;
+    }
+    // Exactly-two-space-indented lines are package entries; deeper indents
+    // (field lines like `    resolution: {...}`) are metadata we skip.
     if (!/^ {2}[^ ]/.test(rawLine)) continue;
-    // Stop at the next top-level section (settings:, importers:, etc.).
-    if (/^[^ ]/.test(rawLine) && !/^ {2}/.test(rawLine)) inPackages = false;
-    const key = rawLine.trim().replace(/:$/, "").replace(/^['"]|['"]$/g, "");
+    // Compact snapshot form `name@version: {}` and block form both end with
+    // a colon after the key; strip any trailing `: {}` / `:`.
+    const key = rawLine.trim().replace(/\s*:\s*\{?\}?\s*$/, "").replace(/^['"]|['"]$/g, "");
     // Strip a leading `/` used for peer-key entries.
     const bare = key.startsWith("/") ? key.slice(1) : key;
     // Key shape: `<name>@<version>` optionally followed by a peer suffix
