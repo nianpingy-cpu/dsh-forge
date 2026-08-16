@@ -7,3 +7,6 @@ coverage/
 !.env.example
 .DS_Store
 Thumbs.db
+# Time-stamped supply-chain artifacts are generated in CI, not committed.
+compatibility/reports/sbom-*
+compatibility/reports/checksums-*

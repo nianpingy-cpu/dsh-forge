@@ -7,7 +7,7 @@
   "license": "MIT",
   "packageManager": "pnpm@11.4.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19"
   },
   "scripts": {
     "test": "vitest run",
@@ -19,6 +19,7 @@
     "format:check": "prettier --check .",
     "build": "pnpm -r run build",
     "clean": "pnpm -r exec rimraf dist coverage || true",
+    "supply-chain": "node scripts/supply-chain-check.ts",
     "review:pr": "node scripts/review-pr.ts"
   },
   "devDependencies": {

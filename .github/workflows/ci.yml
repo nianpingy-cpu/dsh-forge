@@ -114,3 +114,50 @@ jobs:
       - name: Validate pinned upstream manifest (release blocker)
         run: node scripts/compat-matrix.ts compatibility/deepseek-harness.json compatibility/deepseek-harness.json
 
+  # Supply-chain / release hardening (ISSUE-029): secret scan of built
+  # artifacts, package contents allowlist, no redistributed binaries,
+  # lockfile discipline, license allowlist. Runs after the build so dist/
+  # artifacts are present.
+  supply-chain:
+    name: supply-chain (release hardening)
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js (pinned, type-stripping capable)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (produces dist artifacts to scan)
+        run: pnpm build
+
+      - name: Run supply-chain check (secrets, contents, binaries, lockfile, licenses)
+        run: node scripts/supply-chain-check.ts
+
+      - name: Stage dist trees for checksum verification
+        run: |
+          # Stage every workspace package's dist tree so `sha256sum -c`
+          # resolves against the uploaded artifact (packages/* and presets/*).
+          mkdir -p compatibility/reports/dist
+          for d in packages/*/dist presets/*/dist; do
+            [ -d "$d" ] || continue
+            pkg=$(basename "$(dirname "$d")")
+            mkdir -p "compatibility/reports/dist/$pkg"
+            cp -r "$d/." "compatibility/reports/dist/$pkg/"
+          done
+
+      - name: Upload supply-chain artifacts (SBOM + checksums + dist trees)
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-artifacts
+          path: compatibility/reports/
+          if-no-files-found: error
+

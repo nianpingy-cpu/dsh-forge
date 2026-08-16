@@ -1,0 +1,49 @@
+# Review — reviewer-a
+
+- Verdict: **approve**
+- Confidence: 0.8
+
+## Blocking
+(none)
+
+## Non-blocking
+- scripts/supply-chain-check.ts:33 — ALLOWED_DIST_EXT omits .mjs/.cjs (and their .map forms). tsup emits .mjs/.cjs whenever a package is dual-format or `type` is not `module`; a future format change silently fails the gate on legitimate artifacts. Currently all packages are ESM-only so the gate passes.
+- scripts/supply-chain-check.ts:355 — runCli() unit test (tests/supply-chain-check.test.ts:186) writes real sbom-*/checksums-* files into compatibility/reports/ on every `pnpm test`. Confirmed: dozens of timestamped files accumulated in the working tree. It is gitignored and deterministic, but it mutates the repo during tests and depends on cwd==ROOT.
+- scripts/supply-chain-check.ts:357-364 — the 'exit-code contract' test recomputes buildReport() with the same functions runCli() uses, so it only detects divergence between the two, not a wrong exit code for a known-good/bad state (near-tautological).
+- scripts/supply-chain-check.ts:316-328 — the checksum manifest is generated and staged in CI but never verified: the workflow stages dist trees 'so sha256sum -c resolves' but no step ever runs sha256sum -c. Any path mismatch between packageDirs()/staging globs would ship unnoticed.
+- scripts/supply-chain-check.ts:186-188 — buildReport mixes the `root` argument (used for binary scan + lockfile) with module-level ROOT (used by packageDirs()); the license loop even uses the cwd-relative literal 'package.json'. Correct only because every caller runs from repo root.
+- scripts/supply-chain-check.ts:405-406 — the argv[1]==='' branch silently exits 0, so the 'fail-closed by construction' claim is incomplete: a CI invocation via `node --import/--require scripts/supply-chain-check.ts` would run nothing and pass. Direct `node script.ts` always sets argv[1], so this is theoretical.
+- scripts/supply-chain-check.ts:396-404 — the exit-2 fail-closed path triggers whenever argv[1] cannot be realpath'd, including legitimate direct invocations made with a now-unresolvable relative path; combined with the case-insensitive realpath comparison this is a correctness wedge on Windows if the file is on a case-sensitive mount.
+- tests/supply-chain.test.ts:141 — the 'uses only allowlisted licenses' test checks only first-party manifests, not dependency licenses, despite its name mentioning 'production dependencies'; no pnpm license audit exists in CI.
+- tests/supply-chain-check.test.ts:201-210 — assertions hard-code package count (>=12) and specific lockfile versions (@ampproject/remapping@2.3.0 etc.) in tests/supply-chain-lockfile.test.ts:20-22; both are brittle against normal repo/lockfile evolution.
+- .github/workflows/ci.yml — `needs: verify` re-runs pnpm install+build; no `pnpm audit` step anywhere in the workflow despite SECURITY.md claiming 'pnpm audit is run locally/CI'.
+
+## Security
+- scripts/supply-chain-check.ts:24-31 — secret scan is regex-heuristic with real coverage gaps: npm tokens (npm_), Stripe sk_live_, GCP service-account keys, Azure SAS, generic KEY=value .env lines, and multi-line key bodies are not matched. A leak in an unsupported format ships. Acceptable as best-effort, but SECURITY.md describes it as a gate.
+- scripts/supply-chain-check.ts:26 — /sk-[A-Za-z0-9]{20,}/ is broad enough to false-positive on random bundled strings (minified code, sourcemaps), which would fail releases spuriously; consider anchoring to known provider prefixes (sk-proj-, sk-ant-, sk_live_...).
+- scripts/supply-chain-check.ts:63,133 — filesUnder/findRedistributedBinaries use statSync (follows symlinks): a symlink inside dist/repo pulls files outside the tree into the secret scan and checksum manifest, and a symlink cycle causes unbounded recursion (fails closed via crash, but unbounded).
+- scripts/supply-chain-check.ts:137,141 — findRedistributedBinaries skips any directory whose leaf name is in SKIP_DIRS at any depth (a source tree named dist/ hides committed binaries) and the extension list omits .node (native addons), .wasm, .jar, .pyc — a committed native addon outside dist passes the 'no redistributed binaries' gate.
+- scripts/supply-chain-check.ts:91-92,110-124 — the secret and contents checks inspect only each package's dist/ directory, not the actual publishable tarball (`pnpm pack` / package.json `files`). A secret or unexpected file shipped outside dist (README, LICENSE, stray config) is neither scanned nor allow-listed, so SECURITY.md's 'built packages ship only tsup artifacts' overstates what is enforced.
+- scripts/supply-chain-check.ts:83-100 — scanning reads every dist file fully as UTF-8 with no size cap; a pathological/malicious dist tree (huge or binary files) is fully read into memory and regexed. No subprocesses exist, so timeout/execution rules in the header comment (line 13-14) are misleading rather than violated.
+
+## Test gaps
+- No test exercises the exit-2 fail-closed path (unresolvable argv[1]) — the branch is asserted in a commit message but not in the test suite.
+- No test for .mjs/.cjs (or .cjs.map/.mjs.map) handling in the dist allowlist — the single most likely future breakage.
+- No test that writeArtifacts produces a schema-valid CycloneDX SBOM (JSON parse + required fields) or that checksum entries correspond to files actually staged by the CI globs.
+- No test for symlink behavior/cycles in the recursive walkers (filesUnder, findRedistributedBinaries).
+- No negative test proving .node/.wasm/.jar files are flagged (they currently are not — documenting the gap).
+- No test that the secret scan handles non-UTF8/binary dist files without throwing or missing content.
+- No end-to-end test of the CLI gate against a deliberately failing fixture (secret in dist, bad license, extra file) asserting exit code 1 — the exit-code test is self-referential.
+
+## Compatibility
+- package.json:11 — engines raised to >=22.19 (needed for default type-stripping of scripts/supply-chain-check.ts) while packageManager stays pnpm@11.4.0, contradicting compatibility/deepseek-harness.json which pins pnpm@11.7.0; corepack will install a different pnpm than the pinned upstream. Reconcile the pin or update the manifest.
+- package.json:11 — the >=22.19 engines bump is a breaking change for consumers on Node 20/22.0-22.18 with no migration note; CI only tests Node 22, so the claimed 24/26 coverage is not exercised in this repo.
+- scripts/supply-chain-check.ts runs under Node's native type stripping; it must remain erasable-only syntax (no enums/namespaces/parameter properties) or it will break on `node scripts/supply-chain-check.ts`.
+- tests import ../scripts/supply-chain-check.js; this resolves only because Vite/NodeNext maps .js->.ts. scripts/ is absent from tsconfig include — the file is in the typecheck graph only transitively via the import.
+
+## Architecture
+- The gate validates dist/ but never the published package (pnpm pack), so the 'package contents allowlist' and 'secret scan' are narrower than the release-hardening intent; publishing the packed tarball into a temp dir and scanning that would close the gap.
+- parseLockfileDeps (lines 223-267) silently drops aliased (npm:), git, and tarball dependencies and can emit a URL string as a component version; SBOM components also lack purl/license fields. Acceptable provenance, but the SBOM is incomplete as a dependency inventory.
+- The SBOM serialNumber (uuidFromStamp) and the checksums/stamp filenames derive from wall-clock time, so two runs in the same millisecond collide; the whole writeArtifacts step also runs even when the report FAILS (uploading an SBOM for a broken build).
+- SECURITY.md and script header claim env-allowlist + timeout for subprocesses, but the script spawns none — the claim should be corrected or the execution-rules reference dropped to avoid implying controls that do not exist.
+- findRedistributedBinaries uses a coarse SKIP_DIRS-by-leaf-name rule and the CI staging loop (for d in packages/*/dist presets/*/dist) is bash glob duplication of packageDirs(); the two can drift (e.g., a package with dist but no package.json) and nothing verifies they stayed in sync.
