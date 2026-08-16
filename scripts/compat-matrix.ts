@@ -13,7 +13,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export interface UpstreamSnapshot {
   repository: string;
@@ -115,6 +115,9 @@ function main(): void {
   process.exit(report.blocking ? 1 : 0);
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}`) {
+// pathToFileURL handles relative invocation paths (process.argv[1] may be
+// "scripts/compat-matrix.ts") and Windows drive letters correctly — the same
+// pattern as scripts/review-pr.ts.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
