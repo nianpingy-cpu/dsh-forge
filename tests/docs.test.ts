@@ -7,7 +7,7 @@
  *  3. Every documented example directory exists and has a runnable README.
  */
 import { describe, expect, it } from "vitest";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -26,7 +26,9 @@ function markdownLinks(readme: string): string[] {
   const re = /\[[^\]]*\]\(([^)]+)\)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(readme)) !== null) {
-    const target = m[1].trim();
+    const group = m[1];
+    if (group === undefined) continue;
+    const target = group.trim();
     if (
       /^(https?:|mailto:|#)/.test(target) ||
       target.startsWith("http") ||
@@ -35,8 +37,9 @@ function markdownLinks(readme: string): string[] {
       continue;
     }
     // Strip optional title suffix `"..."` if present.
-    const pathPart = target.split(/\s+"[^"]*"$/)[0].trim();
-    links.push(pathPart);
+    const firstPart = target.split(/\s+"[^"]*"$/)[0];
+    if (firstPart === undefined) continue;
+    links.push(firstPart.trim());
   }
   return links;
 }
