@@ -5,8 +5,9 @@ const pinned: UpstreamSnapshot = {
   repository: "deepseek-ai/deepseek-harness",
   commit: "AAAA1111",
   branch: "master",
-  node_requirement: ">=22.19",
-  package_manager: "pnpm@11.7.0",
+  // Human-annotated values as stored in the real pinned manifest.
+  node_requirement: ">=22.19 (upstream CI covers 22.19, 24, 26)",
+  package_manager: "pnpm@11.7.0 via corepack (upstream pin)",
   tool_registration_api: "Cordis plugin architecture",
   permission_hook_api: "TBD",
 };
@@ -19,7 +20,22 @@ describe("compat matrix report generation (ISSUE-027)", () => {
     expect(report.blocking).toBe(false);
     expect(report.latestCommit).toBe(pinned.commit);
   });
-
+  it("does not drift on human annotations — only genuine upstream changes (normalized comparison)", () => {
+    // The pinned manifest stores annotated values (">=22.19 (upstream CI
+    // covers ...)"); the Latest lane fetches raw upstream values (">=22.19").
+    // Verbatim comparison would drift on EVERY run; normalization extracts
+    // the observable core so an unchanged upstream stays compatible.
+    const latest: UpstreamSnapshot = {
+      repository: pinned.repository,
+      commit: pinned.commit,
+      branch: "master",
+      node_requirement: ">=22.19",
+      package_manager: "pnpm@11.7.0",
+    };
+    const report = buildReport(pinned, latest);
+    expect(report.status).toBe("compatible");
+    expect(report.drifts.map((d) => d.field)).toEqual([]);
+  });
   it("reports drift on a simulated upstream break (real observable fields)", () => {
     // A simulated upstream break as the Latest lane would observe it: master
     // advanced and the platform requirements changed. The descriptive API

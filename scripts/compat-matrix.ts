@@ -60,6 +60,31 @@ const COMPARED_FIELDS = [
   "permission_hook_api",
 ] as const;
 
+/**
+ * Normalize a machine-observable value for comparison. The pinned manifest
+ * stores human-annotated values (e.g. ">=22.19 (upstream CI covers 22.19,
+ * 24, 26)" or "pnpm@11.7.0 via corepack (upstream pin)"), while the Latest
+ * lane fetches raw upstream values (">=22.19", "pnpm@11.7.0"). Comparing
+ * them verbatim would drift on every run; normalization extracts the
+ * observable core so only genuine upstream changes drift.
+ */
+function normalizeValue(field: string, value: unknown): unknown {
+  if (typeof value !== "string") return value ?? null;
+  const v = value.trim();
+  if (v === "") return null;
+  if (field === "node_requirement") {
+    // leading semver range, e.g. ">=22.19" out of ">=22.19 (upstream CI ...)"
+    const m = v.match(/^(>=|<=|>|<|=|\^|~)?\s*\d+(\.\d+){0,2}(-[^\s(]+)?(\s*\|\|\s*.*)?/);
+    return m ? m[0].replace(/\s+/g, "") : v;
+  }
+  if (field === "package_manager") {
+    // name@version prefix, e.g. "pnpm@11.7.0" out of "pnpm@11.7.0 via ..."
+    const m = v.match(/^[A-Za-z0-9@._-]+@\d+[^\s(]*/);
+    return m ? m[0] : v;
+  }
+  return v;
+}
+
 /** Build the compatibility report for the two lanes. */
 export function buildReport(
   pinned: UpstreamSnapshot,
@@ -83,7 +108,9 @@ export function buildReport(
       if (field !== "commit") unobservedFields.push(field);
       continue;
     }
-    if (JSON.stringify(a ?? undefined) !== JSON.stringify(b)) {
+    const na = normalizeValue(field, a);
+    const nb = normalizeValue(field, b);
+    if (JSON.stringify(na) !== JSON.stringify(nb)) {
       drifts.push({ field, pinned: a ?? null, latest: b });
     }
   }
