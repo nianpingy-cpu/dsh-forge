@@ -11,9 +11,9 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
-const ROOT = resolve(import.meta.dirname, "..");
+const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
 /** All packages that must ship a README (plugin packages + core). */
 function packageDirs(): string[] {
@@ -22,27 +22,49 @@ function packageDirs(): string[] {
     .map((d) => join(ROOT, "packages", d));
 }
 
+interface RegisteredTool {
+  name: string;
+  mutationClass?: string;
+  args: string[];
+}
+
 /**
- * Load a plugin package and return its registered tool names.
- * Plugins export either a default `Plugin` object or a named `*Plugin`
- * object: `{ metadata, tools }`.
+ * Load a plugin package and return its registered tool names plus the
+ * mutationClass and input-schema argument names for each tool. Plugins
+ * export either a default `Plugin` object or a named `*Plugin` object:
+ * `{ metadata, tools }`.
  */
 async function registeredTools(
   dir: string,
-): Promise<{ name: string; tools: string[] } | undefined> {
+): Promise<{ name: string; tools: RegisteredTool[] } | undefined> {
   const pkg = JSON.parse(
     readFileSync(join(dir, "package.json"), "utf8"),
   ) as { name: string; main?: string; module?: string };
   const entry = pkg.module ?? pkg.main ?? "src/index.ts";
   const mod = (await import(pathToFileURL(join(dir, entry)).href)) as Record<
     string,
-    { tools?: { name?: string }[] } | undefined
+    {
+      tools?: {
+        name?: string;
+        mutationClass?: string;
+        inputSchema?: { properties?: Record<string, unknown> };
+      }[];
+    } | undefined
   >;
   const plugin =
     mod.default ??
     Object.values(mod).find((v) => v && Array.isArray(v.tools) && v.tools.length > 0);
   if (!plugin?.tools) return undefined;
-  return { name: pkg.name, tools: plugin.tools.map((t) => t.name).filter(Boolean) };
+  const tools: RegisteredTool[] = [];
+  for (const t of plugin.tools) {
+    if (t.name === undefined) continue;
+    tools.push({
+      name: t.name,
+      mutationClass: t.mutationClass,
+      args: Object.keys(t.inputSchema?.properties ?? {}),
+    });
+  }
+  return { name: pkg.name, tools };
 }
 
 /** Extract `[text](target)` markdown link targets from a README. */
@@ -85,6 +107,30 @@ function documentedToolNames(text: string): string[] {
   return [...found];
 }
 
+/** Parse the tool table rows `| tool | class | args |` from a README. */
+function toolTableRows(readme: string): Map<string, { cls?: string; args?: string }> {
+  const rows = new Map<string, { cls?: string; args?: string }>();
+  for (const rawLine of readme.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("|")) continue;
+    const nameMatch = /^\|\s*`([a-z][a-z0-9_]*)`\s*\|/.exec(line);
+    if (nameMatch === null) continue;
+    const name = nameMatch[1];
+    if (name === undefined) continue;
+    // Split on unescaped pipes (table columns); `\|` inside a cell is an
+    // escaped literal pipe (e.g. `js\|jsx`) and must not split the column.
+    // The leading/trailing `|` of a Markdown row produce empty edge cells.
+    const cells = line
+      .replace(/(^|[^\\])\|/g, (_, pre) => `${pre}\u0000`)
+      .split("\u0000")
+      .map((c) => c.trim())
+      .filter((c) => c !== "");
+    // cells[0] = tool name cell; cells[1] = MutationClass; cells[2] = args.
+    rows.set(name, { cls: cells[1] || undefined, args: cells[2] || undefined });
+  }
+  return rows;
+}
+
 describe("ISSUE-028 documentation", () => {
   it("ships a README.md for every plugin package and core", () => {
     const dirs = packageDirs();
@@ -116,14 +162,12 @@ describe("ISSUE-028 documentation", () => {
   it("documents only tools that plugins actually register", async () => {
     // Build the global tool registry first (all plugin packages).
     const allTools = new Set<string>();
-    const byPackage = new Map<string, string[]>();
     for (const dir of packageDirs()) {
       if (!dir.includes("plugin-")) continue;
       const reg = await registeredTools(dir);
       expect(reg, `${dir} does not export a default Plugin with tools`).toBeDefined();
       if (!reg) continue;
-      byPackage.set(reg.name, reg.tools);
-      for (const t of reg.tools) allTools.add(t);
+      for (const t of reg.tools) allTools.add(t.name);
     }
     for (const dir of packageDirs()) {
       if (!dir.includes("plugin-")) continue; // core has no tools
@@ -142,9 +186,41 @@ describe("ISSUE-028 documentation", () => {
       // Every registered tool should be documented at least once in its own README.
       for (const tool of reg.tools) {
         expect(
-          readme.includes(tool),
-          `${reg.name} tool "${tool}" is not documented in its README`,
+          readme.includes(tool.name),
+          `${reg.name} tool "${tool.name}" is not documented in its README`,
         ).toBe(true);
+      }
+    }
+  });
+
+  it("documents accurate MutationClass and argument columns in tool tables", async () => {
+    for (const dir of packageDirs()) {
+      if (!dir.includes("plugin-")) continue;
+      const readmePath = join(dir, "README.md");
+      if (!existsSync(readmePath)) continue;
+      const reg = await registeredTools(dir);
+      if (!reg) continue;
+      const readme = readFileSync(readmePath, "utf8");
+      const rows = toolTableRows(readme);
+      for (const tool of reg.tools) {
+        const row = rows.get(tool.name);
+        if (!row) continue; // no table row for this tool (documented in prose)
+        // MutationClass column must match the registered class.
+        if (row.cls && tool.mutationClass) {
+          expect(
+            row.cls,
+            `${reg.name} README lists wrong MutationClass for ${tool.name}`,
+          ).toBe(tool.mutationClass);
+        }
+        // Every required argument name must appear in the args column.
+        if (row.args && tool.args.length > 0) {
+          for (const arg of tool.args) {
+            expect(
+              row.args.includes(arg),
+              `${reg.name} README table for ${tool.name} omits argument "${arg}"`,
+            ).toBe(true);
+          }
+        }
       }
     }
   });
@@ -154,7 +230,7 @@ describe("ISSUE-028 documentation", () => {
     for (const dir of packageDirs()) {
       if (!dir.includes("plugin-")) continue;
       const reg = await registeredTools(dir);
-      if (reg) for (const t of reg.tools) allTools.add(t);
+      if (reg) for (const t of reg.tools) allTools.add(t.name);
     }
     const examplesRoot = join(ROOT, "examples");
     if (!existsSync(examplesRoot)) return; // reported by the examples test

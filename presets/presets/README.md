@@ -30,9 +30,9 @@ pnpm add @dsh-forge/presets
 ```ts
 import { PRESETS, resolvePreset, resolvePresetOrThrow, validatePreset, presetToolNames } from "@dsh-forge/presets";
 
-resolvePreset("python");      // { name, plugins: [...] }
-validatePreset("python");     // true
-presetToolNames("full");      // all 63 tool names
+const python = resolvePreset("python"); // Preset | undefined
+validatePreset(python!);                // { ok: true } | { ok: false, error }
+presetToolNames(resolvePresetOrThrow("full")); // all 63 tool names
 ```
 
 ## License
