@@ -350,16 +350,26 @@ export function runCli(args: string[] = process.argv.slice(2)): number {
   return report.ok ? 0 : 1;
 }
 
-// CLI entry: `node scripts/supply-chain-check.ts [outDir]`. When the entry
-// guard does not match (e.g. symlink/shim/windows path-casing variance) the
-// script must FAIL CLOSED (exit 2) rather than silently doing nothing, so a
-// release gate can never pass vacuously.
-const isDirectRun = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
-  process.exit(runCli());
-} else if (process.argv[1] !== undefined && process.argv[1].endsWith("supply-chain-check.ts")) {
-  // Path-casing/symlink variant of a direct invocation: still run, but be
-  // loud about it so a mismatch cannot silently pass.
-  console.error("supply-chain-check: running via non-canonical entry path (exit code still enforced)");
-  process.exit(runCli());
+// CLI entry: `node scripts/supply-chain-check.ts [outDir]`. Only when this
+// module is the process main entry (import.meta.main) do we run the gate. If
+// the entry path does not resolve to this script (shim/symlink/casing/dropped
+// extension) the script FAILS CLOSED (exit 2) rather than silently doing
+// nothing, so a release gate can never pass vacuously. When merely imported
+// as a module (e.g. by tests) import.meta.main is false and we do nothing.
+if (import.meta.main) {
+  const invoked = process.argv[1] ?? "";
+  if (import.meta.url === pathToFileURL(invoked).href) {
+    // Canonical direct invocation.
+    process.exit(runCli());
+  } else if (/supply-chain-check(?:\.ts)?$/i.test(invoked.replace(/\\/g, "/"))) {
+    // Direct invocation via a non-canonical path (shim/symlink/casing/dropped
+    // extension): run it but be loud, so a mismatch can never silently pass.
+    console.error("supply-chain-check: running via non-canonical entry path (exit code still enforced)");
+    process.exit(runCli());
+  } else {
+    // Main entry that does not resolve to this script — fail closed instead
+    // of exiting 0 with no checks performed.
+    console.error("supply-chain-check: entry path mismatch; failing closed (exit 2)");
+    process.exit(2);
+  }
 }
