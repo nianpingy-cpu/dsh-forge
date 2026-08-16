@@ -142,7 +142,16 @@ jobs:
       - name: Run supply-chain check (secrets, contents, binaries, lockfile, licenses)
         run: node scripts/supply-chain-check.ts
 
-      - name: Upload supply-chain artifacts (SBOM + checksums)
+      - name: Stage dist trees for checksum verification
+        run: |
+          mkdir -p compatibility/reports/dist
+          for d in packages/*/dist; do
+            pkg=$(basename "$(dirname "$d")")
+            mkdir -p "compatibility/reports/dist/$pkg"
+            cp -r "$d/." "compatibility/reports/dist/$pkg/"
+          done
+
+      - name: Upload supply-chain artifacts (SBOM + checksums + dist trees)
         uses: actions/upload-artifact@v4
         with:
           name: supply-chain-artifacts

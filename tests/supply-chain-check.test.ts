@@ -13,6 +13,7 @@ import {
   scanSecrets,
   checkContents,
   findRedistributedBinaries,
+  parseLockfileDeps,
   SECRET_PATTERNS,
 } from "../scripts/supply-chain-check.js";
 
@@ -81,5 +82,50 @@ describe("supply-chain-check", () => {
     const sources = SECRET_PATTERNS.map((p) => p.source);
     expect(sources.some((s) => s.includes("PRIVATE KEY"))).toBe(true);
     expect(sources.some((s) => s.startsWith("AKIA"))).toBe(true);
+  });
+
+  it("scans secrets inside nested dist subdirectories (regression: walker must keep relative paths)", () => {
+    mkdirSync(join(dir, "dist", "chunks"), { recursive: true });
+    writeFileSync(join(dir, "dist", "chunks", "vendor.js"), "const k='AKIAIOSFODNN7EXAMPLE';");
+    const result = scanSecrets(dir);
+    expect(result.ok).toBe(false);
+    expect(result.findings.some((f) => f.file === "chunks/vendor.js")).toBe(true);
+  });
+
+  it("enforces the allowlist on nested dist files without crashing", () => {
+    mkdirSync(join(dir, "dist", "chunks"), { recursive: true });
+    writeFileSync(join(dir, "dist", "chunks", "vendor.js"), "ok");
+    writeFileSync(join(dir, "dist", "chunks", "data.json"), "{}");
+    const result = checkContents(dir);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => e.includes("chunks/data.json"))).toBe(true);
+  });
+
+  it("locates nested redistributed binaries by relative path", () => {
+    mkdirSync(join(dir, "vendor", "bin"), { recursive: true });
+    writeFileSync(join(dir, "vendor", "bin", "tool.exe"), "MZ");
+    const found = findRedistributedBinaries(dir);
+    expect(found).toContain("vendor/bin/tool.exe");
+  });
+
+  it("parses dependency entries from a pnpm lockfile packages section", () => {
+    const lockfile = [
+      "lockfileVersion: '9.0'",
+      "settings:",
+      "  autoInstallPeers: true",
+      "packages:",
+      "  '@eslint/js@9.30.0':",
+      "    resolution: {integrity: sha512-abc}",
+      "    engines: {node: '>=18'}:",
+      "  typescript@5.8.0:",
+      "    resolution: {integrity: sha512-def}",
+      "  /@types/node@24.13.3:",
+      "    resolution: {integrity: sha512-ghi}",
+      "",
+    ].join("\n");
+    const deps = parseLockfileDeps(lockfile);
+    expect(deps).toContainEqual({ name: "@eslint/js", version: "9.30.0" });
+    expect(deps).toContainEqual({ name: "typescript", version: "5.8.0" });
+    expect(deps).toContainEqual({ name: "@types/node", version: "24.13.3" });
   });
 });

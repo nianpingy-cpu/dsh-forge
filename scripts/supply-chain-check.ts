@@ -47,7 +47,9 @@ function filesUnder(dir: string): string[] {
     const abs = join(base, rel);
     if (!existsSync(abs)) return;
     if (statSync(abs).isDirectory()) {
-      for (const child of readdirSync(abs)) walk(abs, child);
+      for (const child of readdirSync(abs)) {
+        walk(base, rel === "" ? child : join(rel, child));
+      }
     } else {
       out.push(rel.split("\\").join("/"));
     }
@@ -101,12 +103,17 @@ export function checkContents(dir: string): ContentsCheckResult {
 /** Recursively find committed binary artifacts (excluding tool dirs). */
 export function findRedistributedBinaries(root: string): string[] {
   const found: string[] = [];
-  const walk = (dir: string, rel: string) => {
-    const abs = join(dir, rel);
+  const walk = (base: string, rel: string) => {
+    const abs = join(base, rel);
     if (!existsSync(abs)) return;
     if (statSync(abs).isDirectory()) {
-      if (SKIP_DIRS.has(rel)) return;
-      for (const child of readdirSync(abs)) walk(abs, child);
+      // Skip tool dirs at any depth (match on the leaf segment, e.g. a
+      // nested node_modules under packages/plugin-x/node_modules).
+      const leaf = rel.split(/[\\/]/).pop() ?? "";
+      if (leaf !== "" && SKIP_DIRS.has(leaf)) return;
+      for (const child of readdirSync(abs)) {
+        walk(base, rel === "" ? child : join(rel, child));
+      }
     } else if (/\.(exe|dll|so|dylib|a|o|bin)$/i.test(rel)) {
       found.push(rel.split("\\").join("/"));
     }
@@ -182,6 +189,45 @@ export function buildReport(root: string): SupplyChainReport {
   };
 }
 
+/**
+ * Parse the pnpm-lock.yaml `packages:` section into dependency entries.
+ * Dependency-free parser: top-level entries under `packages:` have exactly
+ * two-space indentation and the shape `<name>@<version>:` (or `/name@version:`
+ * for peer-dependent keys). Scope names keep their leading `@`; a leading `/`
+ * marks the peer-key form and is dropped from the reported name.
+ */
+export function parseLockfileDeps(lockfileText: string): { name: string; version: string }[] {
+  const deps: { name: string; version: string }[] = [];
+  let inPackages = false;
+  for (const rawLine of lockfileText.split(/\r?\n/)) {
+    if (rawLine === "packages:") {
+      inPackages = true;
+      continue;
+    }
+    if (!inPackages) continue;
+    // Only exactly-two-space-indented entry lines (deeper indent = fields).
+    if (!/^ {2}[^ ]/.test(rawLine)) continue;
+    // Stop at the next top-level section (settings:, importers:, etc.).
+    if (/^[^ ]/.test(rawLine) && !/^ {2}/.test(rawLine)) inPackages = false;
+    const key = rawLine.trim().replace(/:$/, "").replace(/^['"]|['"]$/g, "");
+    const at = key.lastIndexOf("@");
+    if (at <= 0) continue;
+    const version = key.slice(at + 1);
+    if (version === "" || version === "workspace") continue;
+    let name = key.slice(0, at);
+    if (name.startsWith("/")) name = name.slice(1); // peer-key form
+    if (!name) continue;
+    deps.push({ name, version });
+  }
+  const seen = new Set<string>();
+  return deps.filter((d) => {
+    const k = `${d.name}@${d.version}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 /** Write SBOM + artifact checksums into compatibility/reports/. */
 export function writeArtifacts(
   report: SupplyChainReport,
@@ -190,27 +236,37 @@ export function writeArtifacts(
   mkdirSync(outDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 
-  // Simple dependency SBOM derived from the lockfile package list.
+  // Dependency SBOM derived from the lockfile packages section.
   const lockfile = join(ROOT, "pnpm-lock.yaml");
+  const deps = existsSync(lockfile) ? parseLockfileDeps(readFileSync(lockfile, "utf8")) : [];
   const sbom: Record<string, unknown> = {
-    bomFormat: "DSH-Forge-SBOM",
-    specVersion: "1.0",
-    generatedAt: report.generatedAt,
-    lockfile: existsSync(lockfile) ? "pnpm-lock.yaml" : null,
+    bomFormat: "CycloneDX",
+    specVersion: "1.5",
+    serialNumber: `urn:uuid:${createHash("sha256").update(stamp).digest("hex").slice(0, 32)}`,
+    version: 1,
+    metadata: { timestamp: report.generatedAt },
+    components: deps.map((d) => ({
+      type: "library",
+      "bom-ref": `${d.name}@${d.version}`,
+      name: d.name,
+      version: d.version,
+    })),
   };
   const sbomFile = join(outDir, `sbom-${stamp}.json`);
   writeFileSync(sbomFile, JSON.stringify(sbom, null, 2));
 
-  // SHA-256 checksums for every built artifact.
+  // SHA-256 checksums for every built artifact. The checksum manifest uses
+  // paths relative to the reports dir that mirror the uploaded CI artifact
+  // layout (dist trees are uploaded alongside so `sha256sum -c` resolves).
   const checksums: Record<string, string> = {};
   for (const dir of packageDirs()) {
     const dist = join(dir, "dist");
     if (!existsSync(dist)) continue;
+    const pkgName = dir.split(/[\\/]/).pop() ?? dir;
     for (const file of filesUnder(dist)) {
       const abs = join(dist, file);
       const hash = createHash("sha256").update(readFileSync(abs)).digest("hex");
-      const pkgName = dir.split(/[\\/]/).pop();
-      checksums[`${pkgName}/dist/${file}`] = hash;
+      checksums[`dist/${pkgName}/${file}`] = hash;
     }
   }
   const checksumsFile = join(outDir, `checksums-${stamp}.sha256`);
