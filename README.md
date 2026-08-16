@@ -79,7 +79,7 @@ Fix / Retry / Verify
 
 目前已经完成：
 
-- **10 个核心插件**
+- **11 个核心插件**
 - **1 个统一 Core SDK**
 - **1 套 Quality & Security Gate**
 - **7 个 Presets**
@@ -262,11 +262,11 @@ PASS
 主要能力：
 
 ```text
-trivy_fs
-trivy_image
-trivy_config
+trivy_repo_scan
+trivy_config_scan
+trivy_secret_scan
+trivy_image_scan
 trivy_sbom
-trivy_version
 ```
 
 ---
@@ -319,8 +319,6 @@ FAIL
 - Build
 - Compose up
 - Compose down
-- Run
-- Exec
 
 高风险操作不会被简单暴露为任意 Shell。
 

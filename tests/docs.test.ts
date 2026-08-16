@@ -5,10 +5,13 @@
  *  1. Every plugin package and `@dsh-forge/core` ships a README.md.
  *  2. Relative markdown links in those READMEs resolve to real files.
  *  3. Every documented example directory exists and has a runnable README.
+ *  4. Tool names documented in plugin READMEs and example guides exist in the
+ *     actually-registered plugin tools (no invented tool names).
  */
 import { describe, expect, it } from "vitest";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -17,6 +20,29 @@ function packageDirs(): string[] {
   return readdirSync(join(ROOT, "packages"))
     .filter((d) => d.startsWith("plugin-") || d === "core")
     .map((d) => join(ROOT, "packages", d));
+}
+
+/**
+ * Load a plugin package and return its registered tool names.
+ * Plugins export either a default `Plugin` object or a named `*Plugin`
+ * object: `{ metadata, tools }`.
+ */
+async function registeredTools(
+  dir: string,
+): Promise<{ name: string; tools: string[] } | undefined> {
+  const pkg = JSON.parse(
+    readFileSync(join(dir, "package.json"), "utf8"),
+  ) as { name: string; main?: string; module?: string };
+  const entry = pkg.module ?? pkg.main ?? "src/index.ts";
+  const mod = (await import(pathToFileURL(join(dir, entry)).href)) as Record<
+    string,
+    { tools?: { name?: string }[] } | undefined
+  >;
+  const plugin =
+    mod.default ??
+    Object.values(mod).find((v) => v && Array.isArray(v.tools) && v.tools.length > 0);
+  if (!plugin?.tools) return undefined;
+  return { name: pkg.name, tools: plugin.tools.map((t) => t.name).filter(Boolean) };
 }
 
 /** Extract `[text](target)` markdown link targets from a README. */
@@ -44,6 +70,21 @@ function markdownLinks(readme: string): string[] {
   return links;
 }
 
+/** Tool names referenced in a document (backtick-quoted tool-like names). */
+function documentedToolNames(text: string): string[] {
+  const found = new Set<string>();
+  const re = /`([a-z][a-z0-9_]*)`/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const name = m[1];
+    if (name === undefined) continue;
+    // Only names that look like registered tool identifiers (contains an
+    // underscore family prefix, e.g. ruff_check, k6_run, ast_search).
+    if (/^[a-z0-9]+_[a-z0-9_]+$/.test(name)) found.add(name);
+  }
+  return [...found];
+}
+
 describe("ISSUE-028 documentation", () => {
   it("ships a README.md for every plugin package and core", () => {
     const dirs = packageDirs();
@@ -67,6 +108,64 @@ describe("ISSUE-028 documentation", () => {
         expect(
           existsSync(abs),
           `${readmePath} links to missing target: ${target}`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("documents only tools that plugins actually register", async () => {
+    // Build the global tool registry first (all plugin packages).
+    const allTools = new Set<string>();
+    const byPackage = new Map<string, string[]>();
+    for (const dir of packageDirs()) {
+      if (!dir.includes("plugin-")) continue;
+      const reg = await registeredTools(dir);
+      expect(reg, `${dir} does not export a default Plugin with tools`).toBeDefined();
+      if (!reg) continue;
+      byPackage.set(reg.name, reg.tools);
+      for (const t of reg.tools) allTools.add(t);
+    }
+    for (const dir of packageDirs()) {
+      if (!dir.includes("plugin-")) continue; // core has no tools
+      const readmePath = join(dir, "README.md");
+      if (!existsSync(readmePath)) continue;
+      const reg = await registeredTools(dir);
+      if (!reg) continue;
+      const readme = readFileSync(readmePath, "utf8");
+      const documented = documentedToolNames(readme);
+      for (const name of documented) {
+        expect(
+          allTools.has(name),
+          `${reg.name} README documents unknown tool "${name}"`,
+        ).toBe(true);
+      }
+      // Every registered tool should be documented at least once in its own README.
+      for (const tool of reg.tools) {
+        expect(
+          readme.includes(tool),
+          `${reg.name} tool "${tool}" is not documented in its README`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("documents only real tools in the example guides", async () => {
+    const allTools = new Set<string>();
+    for (const dir of packageDirs()) {
+      if (!dir.includes("plugin-")) continue;
+      const reg = await registeredTools(dir);
+      if (reg) for (const t of reg.tools) allTools.add(t);
+    }
+    const examplesRoot = join(ROOT, "examples");
+    if (!existsSync(examplesRoot)) return; // reported by the examples test
+    for (const entry of readdirSync(examplesRoot)) {
+      const readmePath = join(examplesRoot, entry, "README.md");
+      if (!existsSync(readmePath)) continue;
+      const readme = readFileSync(readmePath, "utf8");
+      for (const name of documentedToolNames(readme)) {
+        expect(
+          allTools.has(name),
+          `examples/${entry}/README.md references unknown tool "${name}"`,
         ).toBe(true);
       }
     }
