@@ -91,7 +91,7 @@ describe("ISSUE-028 documentation", () => {
   });
 
   it("documents the seven presets in the presets package README", () => {
-    const readmePath = join(ROOT, "packages", "presets", "README.md");
+    const readmePath = join(ROOT, "presets", "presets", "README.md");
     expect(existsSync(readmePath)).toBe(true);
     const readme = readFileSync(readmePath, "utf8");
     for (const preset of [
