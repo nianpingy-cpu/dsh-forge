@@ -1,0 +1,25 @@
+# Review — reviewer-a
+
+- Verdict: **approve**
+- Confidence: 0.85
+
+## Blocking
+(none)
+
+## Non-blocking
+- {"file":"PROJECT_STATUS.md","line":4,"summary":"Docs assert 'V1.0.0 published — tag v1.0.0', 'ISSUE-030 MERGED', and 'Current Branch: main' while the PR is unmerged: at HEAD the branch is still V0.1.0/issue-030-v1.0.0-release, main is at 7c2a17e, and no v1.0.0 tag exists (only v0.1.0/v0.2.0/v0.3.0). The docs describe the post-merge/post-release state as fact before it happens."}
+- {"file":"README.md","line":78,"summary":"README lists 'GitHub Releases: ... / v1.0.0' and '500+ automated tests'. The v1.0.0 release claim is forward-looking (tag not yet created), and the test count is not substantiated by this PR — the previous release documented 471 passing tests and this PR adds no tests."}
+- {"file":"packages/plugin-act/src/index.ts","line":543,"summary":"The first release commit (f037d12) introduced UTF-8 corruption in 11 plugin sources, repaired by the follow-up commit 8ba03ec in the same PR. The corrupted intermediate state is permanently retained in git history; the net diff at HEAD is clean."}
+
+## Security
+(none)
+
+## Test gaps
+- {"file":"packages/core/src/testing/kit.ts","line":145,"summary":"The contract kit asserts plugin.metadata.coreContractVersion === CORE_VERSION but nothing asserts metadata.version === the package's own package.json version. A partial bump in one package (e.g. package.json bumped, metadata.version forgotten) would pass CI; this release PR is exactly the class of change such a monorepo-wide version audit would guard against."}
+- {"file":"PROJECT_STATUS.md","line":4,"summary":"Release claims (tag existence, '500+ passing tests', CI lanes all PASS) are manual documentation assertions with no automated check; the v1.0.0 tag does not exist at the reviewed commit."}
+
+## Compatibility
+- {"file":"compatibility/reports/sbom-2026-08-16T07-35-56-558Z.json","line":1,"summary":"The committed CycloneDX SBOMs predate the version bump and contain no @dsh-forge workspace components (third-party deps only), so the committed supply-chain artifacts don't reflect 1.0.0 first-party packages. Regenerated per CI run, so transient — but the SBOM omitting first-party packages is a provenance gap for the ISSUE-029 SBOM goal."}
+
+## Architecture
+- {"file":"packages/core/src/index.ts","line":7,"summary":"Version bump is consistent with the plugin contract: CORE_VERSION, all 11 plugins' metadata.version/coreContractVersion, presets, package.json manifests, and the smoke/contract-kit fixtures are aligned on 1.0.0. No single-source-of-truth divergence found."}
