@@ -144,8 +144,11 @@ jobs:
 
       - name: Stage dist trees for checksum verification
         run: |
+          # Stage every workspace package's dist tree so `sha256sum -c`
+          # resolves against the uploaded artifact (packages/* and presets/*).
           mkdir -p compatibility/reports/dist
-          for d in packages/*/dist; do
+          for d in packages/*/dist presets/*/dist; do
+            [ -d "$d" ] || continue
             pkg=$(basename "$(dirname "$d")")
             mkdir -p "compatibility/reports/dist/$pkg"
             cp -r "$d/." "compatibility/reports/dist/$pkg/"
