@@ -14,7 +14,7 @@ DSH Forge 提供的是开发者工具与 DeepSeek Harness 之间的一层适配�
 
 **Current release: `v1.0.0`**
 
-- 11 个核心插件
+- 12 个核心插件
 - 1 个统一 Core SDK
 - 1 套 Quality & Security Gate
 - 7 个 Presets
@@ -85,6 +85,10 @@ Python 环境与依赖管理。
 ## 11. FFmpeg — Media Operations
 
 把 FFmpeg 命令封装成高层类型化操作：probe、clip、transcode、concat、audio、thumbnail、compress，而不是让模型拼接任意 FFmpeg Shell 命令。
+
+## 12. Vision — 识图、数据分析与图表
+
+面向开发者的图像与数据分析工具：检查 UI 截图并返回结构化的尺寸、对比度与配色诊断；分析客户发来的简单 CSV/JSON 数据；生成 SVG 图表写入工作区。工具：`vision_inspect`、`data_analyze`、`chart_generate`。
 
 ---
 
@@ -170,7 +174,7 @@ DeepSeek Harness
       └───────────┘
     ├ Argument Validation ├ Permission Policy ├ Workspace Boundary ┤
       ↓ Safe Adapter
-      ast-grep · Ruff · Biome · uv · act · Semgrep · Trivy · Docker · k6 · FFmpeg
+      ast-grep · Ruff · Biome · uv · act · Semgrep · Trivy · Docker · k6 · FFmpeg · Vision
       ↓ Structured Result
       Reason / Fix / Verify
 ```

@@ -44,6 +44,9 @@ importers:
       '@dsh-forge/plugin-uv':
         specifier: workspace:*
         version: link:packages/plugin-uv
+      '@dsh-forge/plugin-vision':
+        specifier: workspace:*
+        version: link:packages/plugin-vision
       '@dsh-forge/presets':
         specifier: workspace:*
         version: link:presets/presets
@@ -212,6 +215,16 @@ importers:
         specifier: ^8.5.0
         version: 8.5.1(postcss@8.5.26)(typescript@5.9.3)
 
+  packages/plugin-vision:
+    dependencies:
+      '@dsh-forge/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.26)(typescript@5.9.3)
+
   presets/presets:
     dependencies:
       '@dsh-forge/core':
@@ -250,6 +263,9 @@ importers:
       '@dsh-forge/plugin-uv':
         specifier: workspace:*
         version: link:../../packages/plugin-uv
+      '@dsh-forge/plugin-vision':
+        specifier: workspace:*
+        version: link:../../packages/plugin-vision
     devDependencies:
       tsup:
         specifier: ^8.5.0

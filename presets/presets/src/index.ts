@@ -16,6 +16,7 @@ import { actPlugin } from "@dsh-forge/plugin-act";
 import { dockerPlugin } from "@dsh-forge/plugin-docker";
 import { k6Plugin } from "@dsh-forge/plugin-k6";
 import { ffmpegPlugin } from "@dsh-forge/plugin-ffmpeg";
+import { visionPlugin } from "@dsh-forge/plugin-vision";
 
 export interface Preset {
   name: string;
@@ -42,6 +43,7 @@ const full = Object.freeze([
   k6Plugin,
   ffmpegPlugin,
   qualityGatePlugin,
+  visionPlugin,
 ]);
 
 export const PRESETS: readonly Preset[] = Object.freeze([
@@ -84,7 +86,7 @@ export const PRESETS: readonly Preset[] = Object.freeze([
   Object.freeze({
     name: "full",
     description:
-      "Every plugin: ast-grep, Ruff, Biome, uv, act, Semgrep, Trivy, Docker, k6, FFmpeg and the quality gate",
+      "Every plugin: ast-grep, Ruff, Biome, uv, act, Semgrep, Trivy, Docker, k6, FFmpeg, the quality gate and vision",
     plugins: full,
   }),
 ]);
