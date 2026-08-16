@@ -1,43 +1,41 @@
 {
-  "verdict": "request_changes",
-  "blocking": [
-    "PNG IDAT inflation is unbounded: `inflateSync(Buffer.concat(idat))` fully decompresses the stream *before* the `raw.length < (stride+1)*height` guard runs. The compressed file is bounded by the plugin's 64 MiB input cap, but a crafted PNG (this tool's primary input is untrusted client screenshots) can declare dimensions within the 16M-pixel gate while its IDAT stream inflates to hundreds of MB–GBs, OOM-killing the worker or stalling the host. Fix is one line: `inflateSync(Buffer.concat(idat), { maxOutputLength: (stride + 1) * height })` (throws ERR_BUFFER_TOO_LARGE → caught → stats undefined). Same class of issue applies to the `out` buffer allocation and the CSV path is only bounded by timeout. (file=\"packages/plugin-vision/scripts/vision-worker.mjs\", area=\"resource handling / untrusted input\")"
-  ],
+  "verdict": "approve",
+  "blocking": [],
   "non_blocking": [
-    "Truncated-image parsing yields NaN dimensions: WebP detection only requires 12 bytes but VP8X/VP8 /VP8L branches read bytes 21-29; GIF detection requires 6 bytes but reads bytes 6-9; BMP detection requires 2 bytes but reads bytes 14-25. Tiny/truncated files produce `NaN` width/height that flow into `aspectRatio`, diagnostics, and JSON `null`s instead of a `ParseFailure` error. Add length guards before each variant read. (file=\"packages/plugin-vision/scripts/vision-worker.mjs\", area=\"correctness\")",
-    "`chart_generate` overwrite guard is check-then-act: two concurrent calls to the same output with `overwrite:false` can both pass `existsSync` and both write (interleaved/truncated SVG, and the no-overwrite contract is violated). Use an atomic create-exclusive write (or serialize per output path). (file=\"packages/plugin-vision/src/index.ts\", area=\"concurrency\")",
-    "Inline `series` items have no per-label length cap and are serialized into argv. 2000 items with long labels can exceed the Windows ~32K CreateProcess command-line limit, surfacing as an opaque ToolFailure. Add a total argv budget or per-label maxLength. (file=\"packages/plugin-vision/src/index.ts\", area=\"cross-platform\")",
-    "`chart_generate` accepts both `data` and `series`; `series` silently wins in the worker. Reject the combination or document precedence. (file=\"packages/plugin-vision/src/index.ts\", area=\"correctness\")",
-    "Output extension is not enforced: the schema/README say `.svg`, but any path is accepted, so SVG content can be written to `output.png` or an extensionless file. Minor, but the contract is misadvertised. (file=\"packages/plugin-vision/src/index.ts\", area=\"correctness\")",
-    "An empty data file (0-byte CSV) returns `ToolFailure: no data rows found` rather than the structured `empty-data` diagnostic the issue's design intends. A header-only file does produce the structured diagnostic, so the zero-row case is inconsistent. (file=\"packages/plugin-vision/scripts/vision-worker.mjs\", area=\"error handling\")",
-    "Row 0 is always treated as a header for both analyze and chart, so a header-less CSV silently drops its first record. Should be detected/documented rather than silently lost. (file=\"packages/plugin-vision/scripts/vision-worker.mjs\", area=\"correctness\")",
-    "The worker writes to the absolute `--out` path with no knowledge of the workspace root and no re-validation. If a symlink is swapped at the output path between the plugin's `resolveInWorkspace`/`existsSync` checks and the worker's `writeFileSync`, the write follows it (TOCTOU). Boundary enforcement lives entirely in the plugin layer; passing the workspace root to the worker for a final containment check (or writing via a core-owned primitive) would close the gap. (file=\"packages/plugin-vision/scripts/vision-worker.mjs\", area=\"security / defense in depth\")"
+    "Header-less CSV (and JSON 2D-array) data silently treats row 0 as a header, dropping the first record from all stats and using its values as column names. For a tool whose purpose is analyzing client CSVs this can present subtly wrong results as correct; document the header assumption or add a hasHeader/autodetect option. (packages/plugin-vision/scripts/vision-worker.mjs:701)",
+    "vision_inspect trusts header-declared dimensions: a ~33-byte crafted PNG claiming width=0xFFFFFFFF,height=1 returns ok:true with absurd dimensions (extreme-aspect-ratio diagnostic) instead of a parse error. Sanity-check width*height*bpp against file size. (packages/plugin-vision/scripts/vision-worker.mjs:251)",
+    "imageDiagnostics contains a dead !parsed.ok branch — cmdInspect returns parse failures directly, so the 'unrecognized-format' diagnostic is never emitted. Harmless but misleading. (packages/plugin-vision/scripts/vision-worker.mjs:437)",
+    "data_analyze memory is bounded only by the 64 MiB input cap and timeout: a wide CSV (many cells of short strings) can drive the worker toward multi-GB heap and OOM-kill, surfacing as a generic ToolFailure. Consider a row/column-count cap in addition to the byte cap. (packages/plugin-vision/scripts/vision-worker.mjs:548)",
+    "chart_generate on a data file with >2000 plottable rows returns InvalidArguments ('too many data points'), a misleading code for a valid file; the constraint is documented nowhere in the tool schema. (packages/plugin-vision/scripts/vision-worker.mjs:978)",
+    "toNumberValue misparses EU decimal commas ('1,5' -> 15) and hex strings ('0x1F' -> 31), and strips %/currency globally; acceptable for heuristics but worth documenting. (packages/plugin-vision/scripts/vision-worker.mjs:109)",
+    "BMP width is read as signed and never abs'd/validated, so a crafted negative-width BMP yields negative width/aspect-ratio in results. (packages/plugin-vision/scripts/vision-worker.mjs:393)",
+    "Empty-file analyze returns ok:true with rows:0 and an error-severity empty-data diagnostic — a successful ToolResult carrying an error-severity finding is a semantic oddity for model-facing rendering. (packages/plugin-vision/scripts/vision-worker.mjs:681)",
+    "parseWorker maps exec.aborted to Timeout and treats stderr overflow as the stdout '8 MiB output cap' message; mislabels are minor since no AbortSignal is passed and stderr is normally empty. (packages/plugin-vision/src/index.ts:160)",
+    "series schema items:{type:'object'} are not shape-validated; a model passing [{foo:1}] passes schema validation and gets a confusing 'no plottable pairs' InvalidArguments instead of a helpful message. (packages/plugin-vision/src/index.ts:506)",
+    "Output write remains a TOCTOU by design: the worker writes to the canonical absolute path with 'w' on overwrite and never re-validates containment. Pre-existing symlink escapes are rejected by resolveInWorkspace, so only concurrent workspace mutation triggers this; passing workspaceRoot to the worker for a final check would close it. (packages/plugin-vision/scripts/vision-worker.mjs:1001)"
   ],
   "security": [
-    "Unbounded PNG inflate (see blocking finding). Reachable by any PNG in the workspace that satisfies bitDepth 8 / non-interlaced / colorType 0|2|6 / width*height <= 16M; the attacker controls the IDAT stream, so decompressed size is not bounded by file size. Fix with `maxOutputLength`. (file=\"packages/plugin-vision/scripts/vision-worker.mjs\", area=\"resource exhaustion\")",
-    "The env-allowlist guarantee for `ctx.run` is asserted in comments (`core's DEFAULT_ENV_ALLOWLIST applies`) but `env` is omitted. If core's default were ever to inherit the full environment, harness secrets would reach a worker that parses untrusted files. The behavior is load-bearing; verify against `@dsh-forge/core` and add a test asserting the worker env is not the full parent env. (file=\"packages/plugin-vision/src/index.ts\", area=\"env allowlist (verification gap)\")",
-    "The workspace-write and symlink-escape guarantees depend entirely on core's `resolveInWorkspace` realpath behavior. The PR's TDD covers a lexical `..` escape but there is no test that an output path resolving through an in-workspace symlink pointing outside the workspace is rejected (both for read and write). (file=\"packages/plugin-vision/src/index.ts\", area=\"workspace boundary (verification gap)\")"
+    "No command injection, no shell, typed argv, leading-dash/control-char rejection, random UUID sentinel for missing worker — all verified. Residual concerns are defense-in-depth: (1) the output-write TOCTOU above; (2) worker echoes full cell values (string 'top', min/max) back into results — inherent to the tool but sensitive cells can reach the model; (3) the pre-spawn existsSync worker check has a tiny delete-between-check-and-spawn window that would degrade to ParseFailure rather than BinaryNotFound. (packages/plugin-vision/src/index.ts:109)",
+    "Env allowlist is load-bearing and now has a test; verified against core runProcess which always applies DEFAULT_ENV_ALLOWLIST when env is omitted. No secrets reach the worker. (packages/plugin-vision/tests/vision.test.ts:343)"
   ],
   "test_gaps": [
-    "No test for a decompression-bomb PNG (small file, huge inflate) — the one-blocker path.",
-    "No test for `chart_generate` permission denial (workspace-write without approval).",
-    "No test for the overwrite guard: existing output + `overwrite:false` rejected; `overwrite:true` replaces.",
-    "No test for the inline `series` path (only the `data`-file path appears in the TDD evidence).",
-    "No test for >64 MiB input rejection, or FIFO/socket/device/directory input rejection.",
-    "No test for truncated/malformed images (WebP/GIF/BMP NaN paths, JPEG without SOF, PNG with bad filters).",
-    "No test for worker timeout or the 8 MiB output-cap truncation path.",
-    "No test for chart edge cases: negative values, single-point pie, pie/area/scatter types, values.length > 2000 via a data file.",
-    "No test exercising Windows argv handling (drive-letter absolute paths, quotes/backslashes in task/title, large series JSON).",
-    "No test asserting the worker receives only the allowlisted env (see security finding)."
+    "No tests for successful JPEG/WebP/GIF/BMP dimension parsing — only truncated-header failures; the format parsers are otherwise unexercised.",
+    "No tests for the Timeout, truncated-output, exitCode-null, or worker-error-document paths in runWorker/parseWorker (mock runners cover ok/BinaryNotFound/malformed only).",
+    "No test for chart_generate reading a JSON data file (only CSV).",
+    "No test for >64 MiB input rejection or FIFO/device/directory rejection in resolveInput.",
+    "No concurrency test for the wx create-exclusive guard (two overlapping writes to one output).",
+    "vision-missing-worker.test.ts claims real-runner coverage but the pre-spawn existsSync short-circuit means the process runner is never invoked; the ENOENT/empty-stdout path is untested.",
+    "No test that the built dist entry resolves scripts/vision-worker.mjs when consumed as an installed package (main/types point to src/index.ts while files ships dist/scripts)."
   ],
   "compatibility": [
-    "Load-bearing dependency on `@dsh-forge/core` `resolveInWorkspace` (realpath/symlink semantics), `DEFAULT_ENV_ALLOWLIST`, and `assertPermission`/`ctx.permission` shapes — none are exercised by tests in this PR, and the DeepSeek Harness manifest itself flags the real permission-hook API as unverified against the pinned commit.",
-    "The worker relies on `process.execPath` + a committed `.mjs`; this matches the plugin-biome node-shim pattern, but the PR has no CI assertion that the built `dist` entry (`main`/`types` point to `./src/index.ts` while `files` ships `dist`/`scripts`) resolves the worker path correctly when consumed as an installed package."
+    "DeepSeek Harness manifest still flags the real permission-hook API as TBD; the plugin's ctx.permission ?? {approved:false} default fails safe (denies), and assertPermission semantics match core's PermissionContext shape.",
+    "main/types pointing at src/index.ts with files shipping dist/scripts is consistent with plugin-biome, but the vision worker path resolution is load-bearing and unverified for a built-package consumer.",
+    "Worker relies on Node zlib maxOutputLength (>=12.19) and randomUUID — fine for the stated >=22.19 requirement."
   ],
   "architecture": [
-    "Binary detection is reimplemented in-plugin (`resolveVisionWorker` + random-sentinel logic) rather than delegated to a shared `@dsh-forge/core` helper, despite the plugin standard stating binary detection must come from core. If the sentinel/`BinaryNotFound` pattern is duplicated across plugins it should be centralized.",
-    "Path parsing/writing is split: the plugin validates and the worker blindly writes to the resolved absolute path without knowing the workspace root. Boundary enforcement should ideally be a core-owned primitive invoked at both layers.",
-    "Worker reports non-standard error codes (`UnsupportedFormat`) that `parseWorker` flattens to `ToolFailure`; fine today, but the mapping table should be documented so future worker codes don't silently lose their meaning."
+    "Binary detection is reimplemented in-plugin (resolveVisionWorker + random sentinel) rather than delegated to a shared core helper, contrary to the plugin standard's 'no infrastructure duplication'; worth centralizing if repeated across plugins.",
+    "Boundary enforcement is split across layers: the plugin validates/canonicalizes and the worker blindly writes to the given absolute path without knowing the workspace root; a core-owned write primitive would be more robust.",
+    "Worker error codes (UnsupportedFormat, ParseFailure, InvalidArguments) flatten to ToolError codes via an ad-hoc mapping table in parseWorker that should be documented so future worker codes don't silently lose meaning."
   ],
-  "confidence": 0.72
+  "confidence": 0.75
 }
