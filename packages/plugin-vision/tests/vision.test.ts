@@ -283,6 +283,26 @@ describe("vision_inspect (read)", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("WorkspaceViolation");
   });
+
+  it("rejects an oversize task string (argv cap)", async () => {
+    const result = await tool().execute(
+      { input: "sample.png", task: "x".repeat(2001) },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("passes a task through and reports the backend-unavailable diagnostic", async () => {
+    const result = await tool().execute(
+      { input: "sample.png", task: "review the header layout" },
+      ctx(realRunner),
+    );
+    expect(result.ok).toBe(true);
+    expect(
+      result.diagnostics?.some((d) => d.rule === "backend-unavailable"),
+    ).toBe(true);
+  }, 30_000);
 });
 
 // -------------------------------------------------------- data_analyze ---
@@ -338,6 +358,45 @@ describe("data_analyze (read)", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("BinaryNotFound");
   });
+
+  it("handles very large datasets without stack overflow", async () => {
+    const lines = ["value"];
+    for (let i = 0; i < 300_000; i++) lines.push(String(i));
+    writeFileSync(join(workspaceRoot, "large.csv"), lines.join("\n"), "utf8");
+    const result = await tool().execute({ data: "large.csv" }, ctx(realRunner));
+    expect(result.ok).toBe(true);
+    expect(result.raw).toContain('"rows": 300000');
+    expect(result.raw).toContain('"max": 299999');
+  }, 60_000);
+
+  it("excludes non-numeric cells from mixed-column statistics", async () => {
+    // The value column is >80% numeric (typed "number") but contains one
+    // non-numeric cell that must not coerce to 0 in min/mean/sum.
+    writeFileSync(
+      join(workspaceRoot, "mixed.csv"),
+      "name,value\nA,10\nB,20\nC,30\nD,40\nE,50\nF,n/a",
+      "utf8",
+    );
+    const result = await tool().execute({ data: "mixed.csv" }, ctx(realRunner));
+    expect(result.ok).toBe(true);
+    expect(result.raw).toContain('"min": 10');
+    expect(result.raw).toContain('"max": 50');
+    expect(result.raw).toContain('"mean": 30');
+    expect(result.raw).toContain('"sum": 150');
+    expect(result.raw).toContain('"count": 5');
+  }, 30_000);
+
+  it("strips a UTF-8 BOM from the first CSV column name", async () => {
+    writeFileSync(
+      join(workspaceRoot, "bom.csv"),
+      "\uFEFFmonth,sales\nJan,10\nFeb,20",
+      "utf8",
+    );
+    const result = await tool().execute({ data: "bom.csv" }, ctx(realRunner));
+    expect(result.ok).toBe(true);
+    expect(result.raw).toContain('"name": "month"');
+    expect(result.raw).not.toContain("\\ufeff");
+  }, 30_000);
 });
 
 // ------------------------------------------------------ chart_generate ---
@@ -494,6 +553,68 @@ describe("chart_generate (workspace-write)", () => {
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("BinaryNotFound");
   });
+
+  it("renders negative bar values inside the plot area", async () => {
+    const result = await tool().execute(
+      {
+        series: [
+          { label: "A", value: 10 },
+          { label: "B", value: -5 },
+        ],
+        type: "bar",
+        output: "neg.svg",
+      },
+      ctx(realRunner),
+    );
+    expect(result.ok).toBe(true);
+    const svg = readFileSync(join(workspaceRoot, "neg.svg"), "utf8");
+    expect(svg).toContain("<rect");
+  }, 30_000);
+
+  it("rejects a series larger than 2000 points", async () => {
+    const big = Array.from({ length: 2001 }, (_, i) => ({
+      label: `L${i}`,
+      value: i,
+    }));
+    const result = await tool().execute(
+      { series: big, type: "bar", output: "big.svg" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("rejects an oversize title (argv cap)", async () => {
+    const result = await tool().execute(
+      { series, type: "bar", title: "x".repeat(2001), output: "t.svg" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("creates missing parent directories for nested outputs", async () => {
+    const result = await tool().execute(
+      { series, type: "bar", output: "charts/sales.svg" },
+      ctx(realRunner),
+    );
+    expect(result.ok, result.error?.message ?? result.summary).toBe(true);
+    expect(existsSync(join(workspaceRoot, "charts", "sales.svg"))).toBe(true);
+  }, 30_000);
+
+  it("renders a single-point pie as a full circle", async () => {
+    const result = await tool().execute(
+      {
+        series: [{ label: "Only", value: 42 }],
+        type: "pie",
+        output: "one.svg",
+      },
+      ctx(realRunner),
+    );
+    expect(result.ok).toBe(true);
+    const svg = readFileSync(join(workspaceRoot, "one.svg"), "utf8");
+    expect(svg).toContain("<circle");
+  }, 30_000);
 });
 
 // ------------------------------------------------- live worker (always) ---

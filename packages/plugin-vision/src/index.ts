@@ -30,7 +30,8 @@ import {
   type ExecutionResult,
   type Diagnostic,
 } from "@dsh-forge/core";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
+import { dirname } from "node:path";
 import { resolveVisionWorker, VISION_WORKER_HINT } from "./binary.js";
 
 /** Input files larger than this are rejected before any whole-file read. */
@@ -84,10 +85,16 @@ function isValidPathInput(value: unknown): value is string {
   );
 }
 
-/** Reject empty/leading-dash chart titles (kept out of the SVG verbatim). */
+/** Cap on text inputs passed through argv (task/title) to bound argv size. */
+const MAX_TEXT_INPUT = 2000;
+
+/** Reject empty/oversize/leading-dash/control-char text inputs. */
 function isValidTextInput(value: unknown): value is string {
   return (
-    typeof value === "string" && !/^\s*-/.test(value) && !hasControlChars(value)
+    typeof value === "string" &&
+    value.length <= MAX_TEXT_INPUT &&
+    !/^\s*-/.test(value) &&
+    !hasControlChars(value)
   );
 }
 
@@ -106,6 +113,22 @@ async function runWorker(
   opts: { timeoutMs?: number } = {},
 ): Promise<{ ok: true; exec: Exec } | { ok: false; result: ToolResult }> {
   const timeoutMs = opts.timeoutMs ?? 120_000;
+  const workerPath = resolveVisionWorker();
+  // A genuinely absent worker (e.g. a package installed without scripts/)
+  // must surface as BinaryNotFound. Checking before spawn keeps the real
+  // runner path deterministic: node itself would otherwise spawn fine and
+  // emit a module-not-found error with empty stdout, which parseWorker would
+  // misread as a ParseFailure instead of BinaryNotFound.
+  if (!existsSync(workerPath)) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        summary: "vision worker not found",
+        error: { code: "BinaryNotFound", message: VISION_WORKER_HINT },
+      },
+    };
+  }
   let exec: ExecutionResult;
   try {
     // No `env` is passed: core's DEFAULT_ENV_ALLOWLIST applies to every
@@ -113,7 +136,7 @@ async function runWorker(
     // never reach the worker while it reads untrusted files.
     exec = await ctx.run({
       binary: process.execPath,
-      args: [resolveVisionWorker(), subcommand, ...args],
+      args: [workerPath, subcommand, ...args],
       cwd: ctx.workspaceRoot,
       timeoutMs,
       maxOutputBytes: 8 * 1024 * 1024,
@@ -221,12 +244,18 @@ function parseWorker(
     const wcode = typeof werr?.code === "string" ? werr.code : "ToolFailure";
     const wmsg =
       typeof werr?.message === "string" ? werr.message : "vision worker failed";
+    // Preserve the normalized error code when the worker's own code maps onto
+    // a ToolError code; unknown worker codes flatten to ToolFailure.
+    const mapped =
+      wcode === "InvalidArguments" || wcode === "ParseFailure"
+        ? wcode
+        : "ToolFailure";
     return {
       ok: false,
       result: {
         ok: false,
         summary: "vision worker failed",
-        error: { code: "ToolFailure", message: `${wcode}: ${wmsg}` },
+        error: { code: mapped, message: `${wcode}: ${wmsg}` },
       },
     };
   }
@@ -534,6 +563,9 @@ const chartGenerate: ToolDefinition = {
     if (!hasData && !hasSeries) {
       return invalid("chart requires either a data file or a series array");
     }
+    if (Array.isArray(a.series) && a.series.length > 2000) {
+      return invalid("series must contain at most 2000 points");
+    }
     if (a.title !== undefined && a.title !== "" && !isValidTextInput(a.title)) {
       return invalid("title must be a non-empty text string");
     }
@@ -552,6 +584,14 @@ const chartGenerate: ToolDefinition = {
     const overwrite = a.overwrite === true;
     const output = resolveOutput(ctx, a.output, overwrite);
     if (!output.ok) return output.result;
+    // Create missing parent directories so nested outputs like
+    // "charts/sales.svg" work; the path is already verified inside the
+    // workspace and the write is gated by workspace-write.
+    try {
+      mkdirSync(dirname(output.absolute), { recursive: true });
+    } catch (err) {
+      return toolFailure(`could not create output directory: ${String(err)}`);
+    }
 
     const workerArgs = ["--type", a.type, "--out", output.absolute];
     if (hasData) {

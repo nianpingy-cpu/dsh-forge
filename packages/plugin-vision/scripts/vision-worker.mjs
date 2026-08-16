@@ -74,8 +74,20 @@ function readArgv(args) {
   return map;
 }
 
+/** Strip XML 1.0 control characters (keeping tab/LF/CR as valid whitespace). */
+function stripControlChars(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) continue;
+    if (c === 0x7f) continue;
+    out += s[i];
+  }
+  return out;
+}
+
 function escapeXml(s) {
-  return String(s).replace(
+  return stripControlChars(String(s)).replace(
     /[<>&'"]/g,
     (c) =>
       ({
@@ -482,8 +494,9 @@ function cmdInspect(args) {
       rule: "backend-unavailable",
       severity: "info",
       message:
-        "model-based design review requires a configured vision backend; returning structural heuristics only",
-      suggestion: "configure DSH_VISION_API_KEY to enable defect recognition",
+        "model-based design review is not available in this build; returning structural heuristics only",
+      suggestion:
+        "review the structural diagnostics (format, dimensions, contrast) below",
     });
   }
   return {
@@ -500,6 +513,11 @@ function cmdInspect(args) {
 }
 
 // ------------------------------------------------------------------ data ---
+
+/** Read a data file as UTF-8, stripping a leading BOM if present. */
+function readDataText(absPath) {
+  return readFileSync(absPath, "utf8").replace(/^\uFEFF/, "");
+}
 
 /** Minimal RFC-4180-ish CSV parser (quotes, CRLF, embedded commas). */
 function parseCsv(text) {
@@ -624,7 +642,7 @@ function cmdAnalyze(args) {
   const isJson = basename(a.data).toLowerCase().endsWith(".json");
   let rows;
   try {
-    const text = readFileSync(a.data, "utf8");
+    const text = readDataText(a.data);
     rows = isJson ? normalizeJsonRows(JSON.parse(text)) : parseCsv(text);
   } catch (err) {
     return {
@@ -659,13 +677,39 @@ function cmdAnalyze(args) {
       .map((r) => r[i])
       .filter((x) => x !== undefined && String(x).trim() !== "");
     if (col.type === "number") {
-      const nums = vals.map((v) => toNumberValue(v));
-      const min = Math.min(...nums);
-      const max = Math.max(...nums);
-      const sum = nums.reduce((acc, v) => acc + v, 0);
+      // A mixed column may be typed "number" when >80% of cells parse, so
+      // filter non-numeric cells first (nulls must never coerce to 0).
+      // Iterate instead of Math.min(...nums) so very large columns cannot
+      // overflow the call stack (RangeError on big spread arguments).
+      const nums = [];
+      for (const v of vals) {
+        const n = toNumberValue(v);
+        if (n !== null) nums.push(n);
+      }
+      if (nums.length === 0) {
+        return {
+          name: col.name,
+          type: "number",
+          count: 0,
+          min: null,
+          max: null,
+          mean: null,
+          sum: null,
+          stddev: null,
+        };
+      }
+      let min = Infinity;
+      let max = -Infinity;
+      let sum = 0;
+      for (const n of nums) {
+        if (n < min) min = n;
+        if (n > max) max = n;
+        sum += n;
+      }
       const mean = sum / nums.length;
-      const variance =
-        nums.reduce((acc, v) => acc + (v - mean) ** 2, 0) / nums.length;
+      let variance = 0;
+      for (const n of nums) variance += (n - mean) ** 2;
+      variance /= nums.length;
       return {
         name: col.name,
         type: "number",
@@ -743,10 +787,18 @@ function buildSvg(chart) {
 
   if (type === "bar") {
     const bw = Math.max(2, (plotW / labels.length) * 0.6);
+    const y0 = y(0);
     values.forEach((v, i) => {
       const bx = x(i) - bw / 2;
-      const bh = (Math.abs(v - minV) / span) * plotH;
-      const by = v >= 0 ? padT + plotH - bh : padT + plotH;
+      let by;
+      let bh;
+      if (v >= 0) {
+        by = y(v);
+        bh = y0 - y(v);
+      } else {
+        by = y0;
+        bh = y(v) - y0;
+      }
       body += `<rect x="${round2(bx)}" y="${round2(by)}" width="${round2(bw)}" height="${round2(Math.max(bh, 0.5))}" fill="${PALETTE[i % PALETTE.length]}"><title>${escapeXml(labels[i])}: ${round2(v)}</title></rect>`;
     });
     labels.forEach((l, i) => {
@@ -775,18 +827,25 @@ function buildSvg(chart) {
     const cx = width / 2;
     const cy = height / 2 + 6;
     const r = Math.min(plotW, plotH) / 2 - 10;
-    let angle = -Math.PI / 2;
-    values.forEach((v, i) => {
-      const frac = Math.abs(v) / total;
-      const a2 = angle + frac * 2 * Math.PI;
-      const x1 = cx + r * Math.cos(angle);
-      const y1 = cy + r * Math.sin(angle);
-      const x2 = cx + r * Math.cos(a2);
-      const y2 = cy + r * Math.sin(a2);
-      const large = frac > 0.5 ? 1 : 0;
-      body += `<path d="M${round2(cx)},${round2(cy)} L${round2(x1)},${round2(y1)} A${r},${r} 0 ${large} 1 ${round2(x2)},${round2(y2)} Z" fill="${PALETTE[i % PALETTE.length]}"><title>${escapeXml(labels[i])}: ${round2(v)} (${Math.round(frac * 100)}%)</title></path>`;
-      angle = a2;
-    });
+    if (values.length === 1) {
+      // A single point would degenerate to a zero-length arc; draw a full
+      // circle instead.
+      const v = values[0];
+      body += `<circle cx="${round2(cx)}" cy="${round2(cy)}" r="${r}" fill="${PALETTE[0]}"><title>${escapeXml(labels[0])}: ${round2(v)} (100%)</title></circle>`;
+    } else {
+      let angle = -Math.PI / 2;
+      values.forEach((v, i) => {
+        const frac = Math.abs(v) / total;
+        const a2 = angle + frac * 2 * Math.PI;
+        const x1 = cx + r * Math.cos(angle);
+        const y1 = cy + r * Math.sin(angle);
+        const x2 = cx + r * Math.cos(a2);
+        const y2 = cy + r * Math.sin(a2);
+        const large = frac > 0.5 ? 1 : 0;
+        body += `<path d="M${round2(cx)},${round2(cy)} L${round2(x1)},${round2(y1)} A${r},${r} 0 ${large} 1 ${round2(x2)},${round2(y2)} Z" fill="${PALETTE[i % PALETTE.length]}"><title>${escapeXml(labels[i])}: ${round2(v)} (${Math.round(frac * 100)}%)</title></path>`;
+        angle = a2;
+      });
+    }
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${titleSvg}${body}</svg>`;
 }
@@ -813,7 +872,7 @@ function cmdChart(args) {
   if (a.data) {
     const isJson = basename(a.data).toLowerCase().endsWith(".json");
     try {
-      const text = readFileSync(a.data, "utf8");
+      const text = readDataText(a.data);
       rows = isJson ? normalizeJsonRows(JSON.parse(text)) : parseCsv(text);
     } catch (err) {
       return {

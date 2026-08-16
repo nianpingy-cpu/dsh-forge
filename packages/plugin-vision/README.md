@@ -13,7 +13,7 @@ pnpm add @dsh-forge/plugin-vision
 
 ## Requirements
 
-- Node.js >= 20 (the deterministic worker runs on the current Node executable;
+- Node.js >= 22.19 (the deterministic worker runs on the current Node executable;
   no external binary is required).
 
 ## Tools
