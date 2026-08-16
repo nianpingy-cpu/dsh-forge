@@ -1,7 +1,7 @@
 /**
  * uv read/process/write adapter (ISSUE-014).
  *
- * Typed tools compiled to uv argv[] 鈥?no shell, no free-form commands.
+ * Typed tools compiled to uv argv[] — no shell, no free-form commands.
  * Read tools: uv_status, uv_tree. Process: uv_run, uv_sync, uv_python.
  * Write (workspace-write + network): uv_add, uv_remove (permission-gated).
  */

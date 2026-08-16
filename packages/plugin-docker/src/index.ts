@@ -1,7 +1,7 @@
 /**
- * Docker adapter (ISSUE-020) 鈥?read-only Docker inspection tools.
+ * Docker adapter (ISSUE-020) — read-only Docker inspection tools.
  *
- * Typed tools compiled to docker argv[] 鈥?no shell, no free-form commands.
+ * Typed tools compiled to docker argv[] — no shell, no free-form commands.
  * All tools are read-only:
  *   docker_status           (read)  docker info --format {{.ServerVersion}}
  *   docker_ps               (read)  docker ps [-a] --format '{{json .}}'
@@ -160,7 +160,7 @@ async function runDocker(
   }
   if (exec.exitCode === null) {
     // A null exit code means docker died from a signal (OOM-kill, segfault)
-    // without a clean exit 鈥?never report that as a valid empty result.
+    // without a clean exit — never report that as a valid empty result.
     return {
       ok: false,
       result: {
@@ -188,7 +188,7 @@ function okResult(summary: string, raw: string): ToolResult {
 /**
  * Parse docker's line-delimited `--format '{{json .}}'` output (one JSON
  * object per line). Empty output is an empty array. A line that is not a JSON
- * object is a ParseFailure 鈥?a security tool must never silently drop
+ * object is a ParseFailure — a security tool must never silently drop
  * unparseable output into a false-negative "0 items" result.
  */
 function parseJsonLines(
@@ -504,7 +504,7 @@ function resolveComposeArgv(
     }
     // canonicalize() can throw non-violation errors for repo-controlled
     // inputs (symlink loop ELOOP, dangling symlink ENOENT, EACCES); a tool
-    // must never throw 鈥?normalize to a ToolFailure.
+    // must never throw — normalize to a ToolFailure.
     return {
       ok: false,
       result: toolFailure(`path could not be resolved: ${String(err)}`),

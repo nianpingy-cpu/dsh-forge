@@ -1,7 +1,7 @@
 /**
  * Biome read/write adapter (ISSUE-012).
  *
- * Typed tools compiled to biome argv[] 鈥?no shell, no free-form commands.
+ * Typed tools compiled to biome argv[] — no shell, no free-form commands.
  * Read tools: biome_check, biome_lint, biome_format_check.
  * Write tools: biome_fix, biome_format (workspace-write, permission-gated).
  * All machine-readable output is parsed as Biome JSON (--reporter=json).

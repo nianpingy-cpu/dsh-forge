@@ -1,7 +1,7 @@
 /**
  * ast-grep read adapter (ISSUE-009).
  *
- * Typed tools compiled to sg argv[] 鈥?no shell, no free-form commands.
+ * Typed tools compiled to sg argv[] — no shell, no free-form commands.
  * All tools are read-only (MutationClass: read).
  */
 import {

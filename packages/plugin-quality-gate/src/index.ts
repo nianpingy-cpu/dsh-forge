@@ -1,5 +1,5 @@
 /**
- * Quality / security gate (ISSUE-018) 鈥?orchestration only, no
+ * Quality / security gate (ISSUE-018) — orchestration only, no
  * reimplementation. The tool detects the project language, runs the matching
  * lint lane (Ruff for Python, Biome for JS/TS) plus the security lanes
  * (Semgrep audit, Trivy secrets) by composing the existing plugin tools,
@@ -11,7 +11,7 @@
  * once approved, every lane runs. Lanes:
  * - A lane whose binary is not installed (BinaryNotFound) is recorded as
  *   "skipped" and does not fail the gate (other lanes still gate).
- * - A lane that errors for any other reason fails the gate (FAIL) 鈥?the gate
+ * - A lane that errors for any other reason fails the gate (FAIL) — the gate
  *   cannot certify quality when a lane did not run.
  * - If no lane actually ran, the gate returns BinaryNotFound instead of
  *   fabricating a verdict.
@@ -102,7 +102,7 @@ function hasAnyExt(dir: string, exts: readonly string[]): boolean {
       if (exts.some((e) => entry.toLowerCase().endsWith(e))) return true;
     }
   } catch {
-    // unreadable directory 鈥?treat as generic
+    // unreadable directory — treat as generic
   }
   return false;
 }
@@ -341,8 +341,8 @@ const qualityGate: ToolDefinition = {
       );
     }
 
-    // The verdict and counts are computed on ALL findings 鈥?never on the
-    // truncated slice 鈥?so a security finding past maxFindings still fails
+    // The verdict and counts are computed on ALL findings — never on the
+    // truncated slice — so a security finding past maxFindings still fails
     // the gate (only the returned diagnostics are capped for the model).
     const capped = diagnostics.slice(0, cap);
     const truncated = diagnostics.length > cap;
@@ -362,7 +362,7 @@ const qualityGate: ToolDefinition = {
       .join(", ");
 
     const summary =
-      `quality gate: ${verdict} 鈥?${counts.error + counts.critical} error(s), ` +
+      `quality gate: ${verdict} — ${counts.error + counts.critical} error(s), ` +
       `${counts.warning} warning(s) across ${outcomes.length} lane(s)` +
       (laneErrors > 0 ? ` (${laneErrors} lane(s) failed to run)` : "") +
       (laneSummary ? ` [${laneSummary}]` : "");
@@ -400,7 +400,7 @@ async function probeAvailable(
 const qualityGateStatus: ToolDefinition = {
   name: "quality_gate_status",
   description:
-    "Report the detected project language and which quality/security lanes are available (Ruff/Biome, Semgrep, Trivy binary availability) 鈥?read-only; use before running quality_gate.",
+    "Report the detected project language and which quality/security lanes are available (Ruff/Biome, Semgrep, Trivy binary availability) — read-only; use before running quality_gate.",
   mutationClass: "read",
   inputSchema: {
     type: "object",

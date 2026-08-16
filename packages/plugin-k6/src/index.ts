@@ -1,7 +1,7 @@
 /**
- * k6 adapter (ISSUE-022) 鈥?load-testing tools.
+ * k6 adapter (ISSUE-022) — load-testing tools.
  *
- * Typed tools compiled to k6 argv[] 鈥?no shell, no free-form commands.
+ * Typed tools compiled to k6 argv[] — no shell, no free-form commands.
  *   k6_version           (read)     k6 version
  *   k6_run               (process)  k6 run <script> [--vus N] [--duration D]
  *   k6_smoke             (process)  k6 run <script> --vus 1 --duration <short>
