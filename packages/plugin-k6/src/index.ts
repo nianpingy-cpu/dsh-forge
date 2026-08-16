@@ -1,7 +1,7 @@
 /**
- * k6 adapter (ISSUE-022) — load-testing tools.
+ * k6 adapter (ISSUE-022) 鈥?load-testing tools.
  *
- * Typed tools compiled to k6 argv[] — no shell, no free-form commands.
+ * Typed tools compiled to k6 argv[] 鈥?no shell, no free-form commands.
  *   k6_version           (read)     k6 version
  *   k6_run               (process)  k6 run <script> [--vus N] [--duration D]
  *   k6_smoke             (process)  k6 run <script> --vus 1 --duration <short>
@@ -675,9 +675,9 @@ export const k6Plugin: {
 } = {
   metadata: {
     name: "@dsh-forge/plugin-k6",
-    version: "0.3.0",
+    version: "1.0.0",
     upstreamTool: "k6",
-    coreContractVersion: "0.3.0",
+    coreContractVersion: "1.0.0",
     capabilities: [
       "version",
       "run",

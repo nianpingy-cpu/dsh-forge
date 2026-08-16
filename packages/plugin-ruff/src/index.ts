@@ -1,7 +1,7 @@
 /**
  * Ruff read/write adapter (ISSUE-011).
  *
- * Typed tools compiled to ruff argv[] — no shell, no free-form commands.
+ * Typed tools compiled to ruff argv[] 鈥?no shell, no free-form commands.
  * Read tools: ruff_check, ruff_format_check, ruff_explain.
  * Write tools: ruff_fix, ruff_format (workspace-write, permission-gated).
  * All machine-readable output is parsed as Ruff JSON, never terminal regex.
@@ -633,9 +633,9 @@ const ruffFormat: ToolDefinition = {
 export const ruffPlugin = {
   metadata: {
     name: "@dsh-forge/plugin-ruff",
-    version: "0.3.0",
+    version: "1.0.0",
     upstreamTool: "Ruff",
-    coreContractVersion: "0.3.0",
+    coreContractVersion: "1.0.0",
     capabilities: [
       "lint:python",
       "format-check:python",

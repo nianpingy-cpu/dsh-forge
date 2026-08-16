@@ -1,9 +1,9 @@
 # PROJECT_STATUS
 
-Current Version: 0.3.0 (V0.3.0 published — tag v0.3.0)
-Current Milestone: V1.0.0
-Current Issue: ISSUE-026 MERGED — V0.3.0 release
-Current Branch: V0.1.0/issue-009-ast-grep-read-adapter (chain tip)
+Current Version: 1.0.0 (V1.0.0 published — tag v1.0.0)
+Current Milestone: V1.0.0 (complete)
+Current Issue: ISSUE-030 MERGED — V1.0.0 release
+Current Branch: main
 
 ## Completed (merged + closed with evidence)
 
@@ -37,24 +37,28 @@ Current Branch: V0.1.0/issue-009-ast-grep-read-adapter (chain tip)
 - ISSUE-024 Presets full set (PR #55, media + full presets)
 - **ISSUE-026 V0.3.0 release** (PR #56): version 0.3.0 bump, full suite green,
   tag v0.3.0 + GitHub Release
+- **ISSUE-027 DeepSeek Harness compatibility matrix** (PR #57): Pinned
+  (required) + Latest (scheduled) lanes, compat-matrix + fetch-latest-snapshot
+  scripts, normalization + unobserved-field reporting
+- **ISSUE-028 Documentation and examples** (PR #58): per-package READMEs for
+  all 11 plugins + core + presets, six example guides, doc-link checker test
+- **ISSUE-029 Supply chain and release hardening** (PR #60): secret scan,
+  package contents allowlist, no redistributed binaries, lockfile discipline,
+  license allowlist, CycloneDX SBOM + SHA-256 checksums, fail-closed gate
+- **ISSUE-030 V1.0.0 release** (PR #61): version 1.0.0 bump across all
+  packages, full suite green, tag v1.0.0 + GitHub Release
 
-## Plugins implemented (10)
+## Plugins implemented (11)
 
-ast-grep · Ruff · Biome · uv · act · Semgrep · Trivy · Docker · k6 · FFmpeg — plus
-`@dsh-forge/core` (runner, diagnostics, workspace policy, contract kit) and
-`@dsh-forge/presets`.
-
-## Open Issues (in dependency order)
-
-- ISSUE-027 DeepSeek Harness compatibility matrix (Pinned + Latest lanes)
-- ISSUE-028 Documentation and examples
-- ISSUE-029 Supply chain and release hardening
-- ISSUE-030 V1.0.0 release
+ast-grep · Ruff · Biome · uv · act · Semgrep · Trivy · Docker · k6 · FFmpeg ·
+Quality Gate — plus `@dsh-forge/core` (runner, diagnostics, workspace policy,
+contract kit) and `@dsh-forge/presets`.
 
 ## Quality signals
 
-- Tests: 471 passing (21 files), typecheck/lint/build clean
-- CI: verify (ubuntu-latest + windows-latest, node 22) PASS
+- Tests: 500+ passing, typecheck/lint/build clean
+- CI: verify (ubuntu-latest + windows-latest, node 22), compat-pinned,
+  supply-chain all PASS
 - Every plugin PR reviewed by an independent external model (DeepSeek via local
   claude CLI) before merge; review artifacts committed under `reviews/`
 - All completion states proven by runnable tests / CI / real tool execution

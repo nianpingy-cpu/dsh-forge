@@ -75,7 +75,7 @@ Fix / Retry / Verify
 
 ## 🚀 Current Status
 
-**Current release: `v0.3.0`**
+**Current release: `v1.0.0`**
 
 目前已经完成：
 
@@ -83,13 +83,13 @@ Fix / Retry / Verify
 - **1 个统一 Core SDK**
 - **1 套 Quality & Security Gate**
 - **7 个 Presets**
-- **471+ automated tests**
+- **500+ automated tests**
 - **Ubuntu / Windows CI**
+- **DeepSeek Harness compatibility matrix**
+- **Supply-chain / release hardening**
 - **Issue-driven + TDD development**
 - **Independent external-model PR review**
-- **GitHub Releases: v0.1.0 / v0.2.0 / v0.3.0**
-
-当前正在向 **v1.0.0** 推进。
+- **GitHub Releases: v0.1.0 / v0.2.0 / v0.3.0 / v1.0.0**
 
 ---
 
@@ -707,13 +707,10 @@ Merge
 
 ## v1.0.0
 
-Planned:
-
-- DeepSeek Harness compatibility matrix
-- Expanded documentation and examples
-- Supply-chain hardening
-- Release hardening
-- Stable public contracts
+- DeepSeek Harness compatibility matrix (Pinned + Latest lanes)
+- Per-plugin documentation and six example guides
+- Supply-chain and release hardening (secret scan, SBOM, checksums, licenses)
+- Stable public contracts (core API, Diagnostic schema, permission model)
 
 ---
 

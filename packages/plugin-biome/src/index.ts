@@ -1,7 +1,7 @@
 /**
  * Biome read/write adapter (ISSUE-012).
  *
- * Typed tools compiled to biome argv[] — no shell, no free-form commands.
+ * Typed tools compiled to biome argv[] 鈥?no shell, no free-form commands.
  * Read tools: biome_check, biome_lint, biome_format_check.
  * Write tools: biome_fix, biome_format (workspace-write, permission-gated).
  * All machine-readable output is parsed as Biome JSON (--reporter=json).
@@ -683,9 +683,9 @@ const biomeFormat: ToolDefinition = {
 export const biomePlugin = {
   metadata: {
     name: "@dsh-forge/plugin-biome",
-    version: "0.3.0",
+    version: "1.0.0",
     upstreamTool: "Biome",
-    coreContractVersion: "0.3.0",
+    coreContractVersion: "1.0.0",
     capabilities: [
       "check:js",
       "check:ts",

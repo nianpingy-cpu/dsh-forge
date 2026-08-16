@@ -1,13 +1,13 @@
 /**
- * Semgrep adapter (ISSUE-016) — static analysis, read-only.
+ * Semgrep adapter (ISSUE-016) 鈥?static analysis, read-only.
  *
- * Typed tools compiled to semgrep argv[] — no shell, no free-form commands.
+ * Typed tools compiled to semgrep argv[] 鈥?no shell, no free-form commands.
  * All tools are read-only (mutationClass "read"); the v1 explicitly does NOT
  * auto-modify user code (no autofix).
- *   semgrep_scan            — scan a directory (default: workspace root)
- *   semgrep_scan_file       — scan a single file
- *   semgrep_ruleset         — validate a local ruleset file
- *   semgrep_security_scan   — security-audit scan (p/security-audit by default)
+ *   semgrep_scan            鈥?scan a directory (default: workspace root)
+ *   semgrep_scan_file       鈥?scan a single file
+ *   semgrep_ruleset         鈥?validate a local ruleset file
+ *   semgrep_security_scan   鈥?security-audit scan (p/security-audit by default)
  *
  * Findings are converted from semgrep's `--json` output into core
  * Diagnostic[]. A nonzero exit (e.g. invalid rule/config) is surfaced as a
@@ -527,9 +527,9 @@ export const semgrepPlugin: {
 } = {
   metadata: {
     name: "@dsh-forge/plugin-semgrep",
-    version: "0.3.0",
+    version: "1.0.0",
     upstreamTool: "semgrep",
-    coreContractVersion: "0.3.0",
+    coreContractVersion: "1.0.0",
     capabilities: [
       "scan",
       "scan-file",
