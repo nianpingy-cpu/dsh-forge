@@ -376,14 +376,16 @@ export function runCli(args: string[] = process.argv.slice(2)): number {
 // wrapper that renames the script still resolves to this file and runs.
 import { realpathSync } from "node:fs";
 
-const invokedEntry = process.argv[1] ?? "";
 const thisFileReal = realpathSync(fileURLToPath(import.meta.url));
+const invokedEntry = process.argv[1] ?? "";
 let invokedReal: string | null = null;
+let invokedRealError: unknown = null;
 if (invokedEntry !== "") {
   try {
     invokedReal = realpathSync(invokedEntry);
-  } catch {
+  } catch (err) {
     invokedReal = null;
+    invokedRealError = err;
   }
 }
 const isThisScript =
@@ -391,8 +393,17 @@ const isThisScript =
   invokedReal.replace(/\\/g, "/").toLowerCase() ===
     thisFileReal.replace(/\\/g, "/").toLowerCase();
 
-if (invokedEntry === "") {
-  // No argv[1] — must be an import in an unusual runtime; do nothing.
+if (invokedEntry !== "" && invokedRealError !== null) {
+  // We were invoked with a process.argv[1] but could not resolve it. This is
+  // NOT an import (an import has a resolvable argv[1] pointing at another
+  // program, e.g. vitest). A release gate must fail closed here instead of
+  // silently exiting 0 with no checks run.
+  console.error(
+    `supply-chain-check: could not resolve entry path (${String(invokedEntry)}); failing closed (exit 2)`,
+  );
+  process.exit(2);
+} else if (invokedEntry === "") {
+  // No argv[1] — cannot be a normal direct invocation; do nothing.
 } else if (isThisScript) {
   // Direct invocation (canonical path, symlink, shim, casing, or dropped
   // extension): run the gate. Fail-closed is enforced inside runCli (exit 1
