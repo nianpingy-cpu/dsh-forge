@@ -91,6 +91,32 @@ function makePng(
   ]);
 }
 
+/**
+ * A valid PNG header declaring tiny dimensions but whose IDAT inflates to a
+ * far larger buffer than the declared frame — a decompression bomb. With the
+ * worker's maxOutputLength bound, inflation throws and pixel stats are
+ * skipped instead of exhausting memory.
+ */
+function makeBombPng(
+  width: number,
+  height: number,
+  inflateBytes: number,
+): Buffer {
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type RGB
+  const idat = deflateSync(Buffer.alloc(inflateBytes, 0));
+  return Buffer.concat([
+    sig,
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", idat),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
 beforeAll(() => {
   workspaceRoot = mkdtempSync(join(tmpdir(), "dsh-vision-"));
   cpSync(FIXTURES, workspaceRoot, { recursive: true });
@@ -284,6 +310,49 @@ describe("vision_inspect (read)", () => {
     expect(result.error?.code).toBe("WorkspaceViolation");
   });
 
+  it("rejects a PNG decompression bomb (bounded inflate)", async () => {
+    // Declares a 2x2 frame (so the 16M-pixel gate passes) but the IDAT
+    // inflates to 32 MiB; the worker's maxOutputLength bound must throw and
+    // skip pixel stats instead of exhausting memory.
+    writeFileSync(
+      join(workspaceRoot, "bomb.png"),
+      makeBombPng(2, 2, 32 * 1024 * 1024),
+    );
+    const result = await tool().execute({ input: "bomb.png" }, ctx(realRunner));
+    expect(result.ok).toBe(true);
+    expect(result.raw).toContain('"stats": null');
+  }, 30_000);
+
+  it("rejects truncated WebP/GIF/BMP headers as ParseFailure", async () => {
+    const cases: Array<[string, Buffer]> = [
+      ["trunc.webp", Buffer.from("RIFF0000WEBP", "ascii")],
+      ["trunc.gif", Buffer.from("GIF89a", "ascii")],
+      ["trunc.bmp", Buffer.from("BM", "ascii")],
+    ];
+    for (const [name, buf] of cases) {
+      writeFileSync(join(workspaceRoot, name), buf);
+      const result = await tool().execute({ input: name }, ctx(realRunner));
+      expect(
+        result.ok,
+        `${name}: ${result.error?.message ?? result.summary}`,
+      ).toBe(false);
+      expect(result.error?.code).toBe("ParseFailure");
+    }
+  }, 30_000);
+
+  it("passes no explicit env to the worker (core allowlist applies)", async () => {
+    let captured: ExecutionRequest | undefined;
+    const inspect = visionPlugin.tools.find(
+      (t) => t.name === "vision_inspect",
+    )!;
+    await inspect.execute(
+      { input: "sample.png" },
+      ctx(captureRunner((req) => (captured = req))),
+    );
+    expect(captured!.env).toBeUndefined();
+    expect(captured!.binary).toBe(process.execPath);
+  });
+
   it("rejects an oversize task string (argv cap)", async () => {
     const result = await tool().execute(
       { input: "sample.png", task: "x".repeat(2001) },
@@ -396,6 +465,13 @@ describe("data_analyze (read)", () => {
     expect(result.ok).toBe(true);
     expect(result.raw).toContain('"name": "month"');
     expect(result.raw).not.toContain("\\ufeff");
+  }, 30_000);
+
+  it("reports a structured empty-data diagnostic for an empty file", async () => {
+    writeFileSync(join(workspaceRoot, "empty.csv"), "", "utf8");
+    const result = await tool().execute({ data: "empty.csv" }, ctx(realRunner));
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics?.some((d) => d.rule === "empty-data")).toBe(true);
   }, 30_000);
 });
 
@@ -615,6 +691,54 @@ describe("chart_generate (workspace-write)", () => {
     const svg = readFileSync(join(workspaceRoot, "one.svg"), "utf8");
     expect(svg).toContain("<circle");
   }, 30_000);
+
+  it("rejects providing both a data file and a series", async () => {
+    const result = await tool().execute(
+      { data: "sales.csv", series, type: "bar", output: "both.svg" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("rejects an oversized inline series (argv budget)", async () => {
+    const huge = Array.from({ length: 200 }, (_, i) => ({
+      label: "L".repeat(200),
+      value: i,
+    }));
+    const result = await tool().execute(
+      { series: huge, type: "bar", output: "huge.svg" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("rejects a non-.svg output path", async () => {
+    const result = await tool().execute(
+      { series, type: "bar", output: "out.png" },
+      ctx(mockRunner()),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("InvalidArguments");
+  });
+
+  it("blocks writes through a symlink escaping the workspace (output)", async () => {
+    const target = join(workspaceRoot, "..", "outside-out.svg");
+    writeFileSync(target, "x", "utf8");
+    const linkPath = join(workspaceRoot, "escape-out.svg");
+    try {
+      symlinkSync(target, linkPath, "file");
+    } catch {
+      return; // symlinks unavailable; skip
+    }
+    const result = await tool().execute(
+      { series, type: "bar", output: "escape-out.svg" },
+      ctx(realRunner),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("WorkspaceViolation");
+  });
 });
 
 // ------------------------------------------------- live worker (always) ---

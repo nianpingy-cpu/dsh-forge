@@ -158,7 +158,14 @@ function samplePngPixels(buf, width, height, colorType) {
   if (idat.length === 0) return undefined;
   let raw;
   try {
-    raw = inflateSync(Buffer.concat(idat));
+    // Bound decompression to the declared frame size: the 64 MiB input cap
+    // bounds the COMPRESSED file, but a crafted IDAT stream can inflate to
+    // hundreds of MB/GB (decompression bomb). zlib throws ERR_BUFFER_TOO_LARGE
+    // when output would exceed maxOutputLength; the catch skips pixel stats
+    // instead of exhausting memory.
+    raw = inflateSync(Buffer.concat(idat), {
+      maxOutputLength: (stride + 1) * height,
+    });
   } catch {
     return undefined;
   }
@@ -328,6 +335,12 @@ function parseJpeg(buf, size) {
 }
 
 function parseWebp(buf, size) {
+  if (buf.length < 30) {
+    return {
+      ok: false,
+      error: { code: "ParseFailure", message: "truncated WebP header" },
+    };
+  }
   const fourcc = buf.toString("ascii", 12, 16);
   if (fourcc === "VP8X") {
     const w = 1 + (buf[24] | (buf[25] << 8) | (buf[26] << 16));
@@ -352,12 +365,24 @@ function parseWebp(buf, size) {
 }
 
 function parseGif(buf, size) {
+  if (buf.length < 10) {
+    return {
+      ok: false,
+      error: { code: "ParseFailure", message: "truncated GIF header" },
+    };
+  }
   const w = readUint16LE(buf, 6);
   const h = readUint16LE(buf, 8);
   return { ok: true, format: "gif", width: w, height: h, size };
 }
 
 function parseBmp(buf, size) {
+  if (buf.length < 26) {
+    return {
+      ok: false,
+      error: { code: "ParseFailure", message: "truncated BMP header" },
+    };
+  }
   const dib = readUint32LE(buf, 14);
   let w;
   let h;
@@ -654,9 +679,23 @@ function cmdAnalyze(args) {
     };
   }
   if (!rows || rows.length === 0) {
+    // An empty file surfaces the same structured empty-data diagnostic as a
+    // header-only file, so callers get a consistent signal.
     return {
-      ok: false,
-      error: { code: "ToolFailure", message: "no data rows found" },
+      ok: true,
+      format: isJson ? "json" : "csv",
+      rows: 0,
+      columns: 0,
+      schema: [],
+      stats: [],
+      diagnostics: [
+        {
+          rule: "empty-data",
+          severity: "error",
+          message: "no data rows found in the file",
+          suggestion: "provide at least one data row to analyze",
+        },
+      ],
     };
   }
   const headers = rows[0].map((h) => String(h).trim());
@@ -956,8 +995,23 @@ function cmdChart(args) {
     values,
   });
   try {
-    writeFileSync(a.out, svg, "utf8");
+    // Create-exclusive unless overwrite is requested: the plugin also guards
+    // with existsSync, but the exclusive flag closes the check-then-act race
+    // (two concurrent calls cannot both pass the guard and interleave).
+    writeFileSync(a.out, svg, {
+      encoding: "utf8",
+      flag: a.overwrite === "true" ? "w" : "wx",
+    });
   } catch (err) {
+    if (err && err.code === "EEXIST") {
+      return {
+        ok: false,
+        error: {
+          code: "ToolFailure",
+          message: "output already exists; set overwrite=true to replace it",
+        },
+      };
+    }
     return {
       ok: false,
       error: {

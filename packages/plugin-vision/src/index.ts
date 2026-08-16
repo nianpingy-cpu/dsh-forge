@@ -563,6 +563,9 @@ const chartGenerate: ToolDefinition = {
     if (!hasData && !hasSeries) {
       return invalid("chart requires either a data file or a series array");
     }
+    if (hasData && hasSeries) {
+      return invalid("provide either a data file or a series array, not both");
+    }
     if (Array.isArray(a.series) && a.series.length > 2000) {
       return invalid("series must contain at most 2000 points");
     }
@@ -580,6 +583,9 @@ const chartGenerate: ToolDefinition = {
       (!Number.isInteger(a.height) || a.height < 100 || a.height > 4096)
     ) {
       return invalid("height must be an integer between 100 and 4096");
+    }
+    if (!/\.svg$/i.test(a.output)) {
+      return invalid("output must end in .svg");
     }
     const overwrite = a.overwrite === true;
     const output = resolveOutput(ctx, a.output, overwrite);
@@ -599,12 +605,22 @@ const chartGenerate: ToolDefinition = {
       if (!resolved.ok) return resolved.result;
       workerArgs.push("--data", resolved.absolute);
     } else {
-      workerArgs.push("--series", JSON.stringify(a.series));
+      const seriesJson = JSON.stringify(a.series);
+      // Bound the argv payload well under the Windows ~32K CreateProcess
+      // limit (with headroom for node/worker paths and other flags), so an
+      // oversized inline series fails cleanly instead of as E2BIG.
+      if (seriesJson.length > 16_000) {
+        return invalid(
+          "series is too large to pass as arguments; write it to a CSV/JSON data file instead",
+        );
+      }
+      workerArgs.push("--series", seriesJson);
     }
     if (a.title !== undefined && a.title !== "")
       workerArgs.push("--title", a.title);
     if (a.width !== undefined) workerArgs.push("--width", String(a.width));
     if (a.height !== undefined) workerArgs.push("--height", String(a.height));
+    if (overwrite) workerArgs.push("--overwrite", "true");
 
     const run = await runWorker(ctx, "chart", workerArgs);
     if (!run.ok) return run.result;
