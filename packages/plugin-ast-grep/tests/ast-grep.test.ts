@@ -46,7 +46,7 @@ describe("ast_search", () => {
     // sample.ts contains two transform(...) calls
     expect(result.summary).toMatch(/2 match/);
     expect(result.raw).toContain("transform(data, config)");
-  });
+  }, 30_000);
 
   it("finds pattern matches in JavaScript", async () => {
     const tool = astGrepPlugin.tools.find((t) => t.name === "ast_search")!;

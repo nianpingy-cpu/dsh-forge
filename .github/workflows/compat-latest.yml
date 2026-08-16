@@ -34,8 +34,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Generate latest snapshot + compatibility report
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('compatibility/deepseek-harness.json','utf8')); p.commit='${{ steps.latest.outputs.sha }}'; p.checked_at=new Date().toISOString().slice(0,10); fs.writeFileSync('compatibility/latest-snapshot.json', JSON.stringify(p,null,2));"
+          # Fetch REAL machine-observable upstream values (commit SHA,
+          # engines.node, packageManager). Non-observable descriptive fields
+          # are omitted so they are reported as unobserved — never mirrored
+          # from the pinned manifest.
+          node scripts/fetch-latest-snapshot.ts deepseek-ai/deepseek-harness compatibility/latest-snapshot.json
           # Drift is non-blocking: the CLI exits 0 for drift (only an invalid
           # pinned manifest blocks). Always generate + upload the report.
           node scripts/compat-matrix.ts compatibility/deepseek-harness.json compatibility/latest-snapshot.json

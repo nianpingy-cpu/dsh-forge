@@ -20,15 +20,17 @@ describe("compat matrix report generation (ISSUE-027)", () => {
     expect(report.latestCommit).toBe(pinned.commit);
   });
 
-  it("reports drift on a simulated upstream break (new commit + changed requirements)", () => {
-    // A simulated upstream break: master advanced and the platform
-    // requirements changed. This is a Latest-lane finding -> non-blocking.
+  it("reports drift on a simulated upstream break (real observable fields)", () => {
+    // A simulated upstream break as the Latest lane would observe it: master
+    // advanced and the platform requirements changed. The descriptive API
+    // notes are NOT machine-observable, so the snapshot omits them (they are
+    // reported as unobserved, never mirrored from the pinned manifest).
     const latest: UpstreamSnapshot = {
-      ...pinned,
+      repository: pinned.repository,
       commit: "BBBB2222",
+      branch: "master",
       node_requirement: ">=24",
       package_manager: "pnpm@12.0.0",
-      permission_hook_api: "verified: permission hook now exposed",
     };
     const report = buildReport(pinned, latest);
     expect(report.status).toBe("drift");
@@ -37,9 +39,32 @@ describe("compat matrix report generation (ISSUE-027)", () => {
       "commit",
       "node_requirement",
       "package_manager",
-      "permission_hook_api",
     ]);
     expect(report.latestCommit).toBe("BBBB2222");
+    // non-observable fields are excluded from the comparison and reported
+    expect(report.unobservedFields.sort()).toEqual([
+      "permission_hook_api",
+      "tool_registration_api",
+    ]);
+  });
+
+  it("never mirrors pinned values as upstream observations (unobserved fields excluded)", () => {
+    // The Latest lane observed only the commit; every other compared field
+    // is unobserved. The report must NOT claim the requirements matched —
+    // they were simply not observable.
+    const latest: UpstreamSnapshot = {
+      repository: pinned.repository,
+      commit: "CCCC3333",
+      branch: "master",
+    };
+    const report = buildReport(pinned, latest);
+    expect(report.drifts.map((d) => d.field)).toEqual(["commit"]);
+    expect(report.unobservedFields.sort()).toEqual([
+      "node_requirement",
+      "package_manager",
+      "permission_hook_api",
+      "tool_registration_api",
+    ]);
   });
 
   it("flags a release blocker when the pinned manifest is invalid (Pinned lane)", () => {

@@ -42,6 +42,14 @@ export interface CompatibilityReport {
   /** True when the Pinned lane is broken (release blocker); drift alone is not. */
   blocking: boolean;
   drifts: Drift[];
+  /**
+   * Fields the Latest lane could not observe from upstream (e.g. the
+   * descriptive registration/permission-hook API notes, which are verified
+   * by a human at pin time). They are excluded from the comparison instead
+   * of being mirrored from the pinned manifest and passed off as upstream
+   * observations.
+   */
+  unobservedFields: string[];
 }
 
 const COMPARED_FIELDS = [
@@ -64,11 +72,19 @@ export function buildReport(
     pinned.commit.trim() !== "";
 
   const drifts: Drift[] = [];
+  const unobservedFields: string[] = [];
   for (const field of COMPARED_FIELDS) {
     const a = pinned[field];
     const b = latest[field];
-    if (JSON.stringify(a ?? undefined) !== JSON.stringify(b ?? undefined)) {
-      drifts.push({ field, pinned: a ?? null, latest: b ?? null });
+    if (b === undefined) {
+      // The Latest lane did not observe this field from upstream (it is not
+      // machine-fetchable). Exclude it from the comparison — never mirror
+      // the pinned value and pretend upstream was compared.
+      if (field !== "commit") unobservedFields.push(field);
+      continue;
+    }
+    if (JSON.stringify(a ?? undefined) !== JSON.stringify(b)) {
+      drifts.push({ field, pinned: a ?? null, latest: b });
     }
   }
 
@@ -80,6 +96,7 @@ export function buildReport(
     status: drifts.length === 0 ? "compatible" : "drift",
     blocking: !pinnedValid, // the Pinned lane is the release blocker
     drifts,
+    unobservedFields,
   };
 }
 
