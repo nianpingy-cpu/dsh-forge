@@ -92,3 +92,17 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # Compatibility matrix — Pinned lane (required, release blocker): the
+  # pinned upstream manifest must be valid (non-empty repository + commit)
+  # or the release is blocked. The Latest lane (drift reports) is scheduled
+  # separately in compat-latest.yml and is non-blocking.
+  compat-pinned:
+    name: compat matrix (Pinned lane, required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate pinned upstream manifest (release blocker)
+        run: node scripts/compat-matrix.ts compatibility/deepseek-harness.json compatibility/deepseek-harness.json
+
