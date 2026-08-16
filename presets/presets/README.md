@@ -23,7 +23,7 @@ pnpm add @dsh-forge/presets
 | `security` | semgrep, trivy, quality-gate |
 | `devops` | act, docker, k6 |
 | `media` | ffmpeg |
-| `full` | all 11 plugins |
+| `full` | all 12 plugins |
 
 ## API
 
@@ -32,7 +32,7 @@ import { PRESETS, resolvePreset, resolvePresetOrThrow, validatePreset, presetToo
 
 const python = resolvePreset("python"); // Preset | undefined
 validatePreset(python!);                // { ok: true } | { ok: false, error }
-presetToolNames(resolvePresetOrThrow("full")); // all 63 tool names
+presetToolNames(resolvePresetOrThrow("full")); // every registered tool name
 ```
 
 ## License

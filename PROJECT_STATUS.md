@@ -2,8 +2,8 @@
 
 Current Version: 1.0.0 (V1.0.0 published — tag v1.0.0)
 Current Milestone: V1.0.0 (complete)
-Current Issue: ISSUE-030 MERGED — V1.0.0 release
-Current Branch: main
+Current Issue: ISSUE-062 IN PROGRESS — Vision, data analysis & chart plugin
+Current Branch: V0.1.0/issue-062-vision-data-chart
 
 ## Completed (merged + closed with evidence)
 
@@ -48,11 +48,11 @@ Current Branch: main
 - **ISSUE-030 V1.0.0 release** (PR #61): version 1.0.0 bump across all
   packages, full suite green, tag v1.0.0 + GitHub Release
 
-## Plugins implemented (11)
+## Plugins implemented (12)
 
 ast-grep · Ruff · Biome · uv · act · Semgrep · Trivy · Docker · k6 · FFmpeg ·
-Quality Gate — plus `@dsh-forge/core` (runner, diagnostics, workspace policy,
-contract kit) and `@dsh-forge/presets`.
+Quality Gate · Vision — plus `@dsh-forge/core` (runner, diagnostics, workspace
+policy, contract kit) and `@dsh-forge/presets`.
 
 ## Quality signals
 
