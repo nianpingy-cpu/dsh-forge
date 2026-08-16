@@ -210,13 +210,18 @@ export function parseLockfileDeps(lockfileText: string): { name: string; version
     // Stop at the next top-level section (settings:, importers:, etc.).
     if (/^[^ ]/.test(rawLine) && !/^ {2}/.test(rawLine)) inPackages = false;
     const key = rawLine.trim().replace(/:$/, "").replace(/^['"]|['"]$/g, "");
-    const at = key.lastIndexOf("@");
-    if (at <= 0) continue;
-    const version = key.slice(at + 1);
+    // Strip a leading `/` used for peer-key entries.
+    const bare = key.startsWith("/") ? key.slice(1) : key;
+    // Key shape: `<name>@<version>` optionally followed by a peer suffix
+    // `(<peer>@<ver>)`. Parse the base name@version only so the SBOM carries
+    // real package identities (peer suffixes are link metadata, not part of
+    // the package spec).
+    const m = bare.match(/^(@?[^@]+)@([^@()]+)(?:\(.*\))?$/);
+    if (m === null) continue;
+    const name = m[1];
+    const version = m[2];
+    if (name === undefined || version === undefined) continue;
     if (version === "" || version === "workspace") continue;
-    let name = key.slice(0, at);
-    if (name.startsWith("/")) name = name.slice(1); // peer-key form
-    if (!name) continue;
     deps.push({ name, version });
   }
   const seen = new Set<string>();
@@ -226,6 +231,17 @@ export function parseLockfileDeps(lockfileText: string): { name: string; version
     seen.add(k);
     return true;
   });
+}
+
+/** Deterministic RFC 4122 v4-style UUID derived from a stamp string. */
+export function uuidFromStamp(stamp: string): string {
+  const hex = createHash("sha256").update(stamp).digest("hex").slice(0, 32);
+  // Set version (4) and variant (8/9/a/b) bits for a valid v4 UUID shape.
+  const h = hex.split("");
+  h[12] = "4";
+  h[16] = ((parseInt(h[16] ?? "8", 16) & 0x3) | 0x8).toString(16);
+  const s = h.join("");
+  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20, 32)}`;
 }
 
 /** Write SBOM + artifact checksums into compatibility/reports/. */
@@ -242,7 +258,7 @@ export function writeArtifacts(
   const sbom: Record<string, unknown> = {
     bomFormat: "CycloneDX",
     specVersion: "1.5",
-    serialNumber: `urn:uuid:${createHash("sha256").update(stamp).digest("hex").slice(0, 32)}`,
+    serialNumber: `urn:uuid:${uuidFromStamp(stamp)}`,
     version: 1,
     metadata: { timestamp: report.generatedAt },
     components: deps.map((d) => ({

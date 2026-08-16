@@ -14,6 +14,7 @@ import {
   checkContents,
   findRedistributedBinaries,
   parseLockfileDeps,
+  uuidFromStamp,
   SECRET_PATTERNS,
 } from "../scripts/supply-chain-check.js";
 
@@ -127,5 +128,32 @@ describe("supply-chain-check", () => {
     expect(deps).toContainEqual({ name: "@eslint/js", version: "9.30.0" });
     expect(deps).toContainEqual({ name: "typescript", version: "5.8.0" });
     expect(deps).toContainEqual({ name: "@types/node", version: "24.13.3" });
+  });
+
+  it("strips peer-suffixes so SBOM components are real package identities", () => {
+    const lockfile = [
+      "packages:",
+      "  '@eslint-community/eslint-utils@4.10.1(eslint@9.39.5)':",
+      "    resolution: {integrity: sha512-peer}",
+      "  'vite@6.0.11(rollup@4.40.0)':",
+      "    resolution: {integrity: sha512-vite}",
+      "",
+    ].join("\n");
+    const deps = parseLockfileDeps(lockfile);
+    expect(deps).toContainEqual({
+      name: "@eslint-community/eslint-utils",
+      version: "4.10.1",
+    });
+    expect(deps).toContainEqual({ name: "vite", version: "6.0.11" });
+    // No garbage components (name must not contain "(" or trailing peer part).
+    for (const d of deps) {
+      expect(d.name.includes("(")).toBe(false);
+      expect(d.name.includes(")")).toBe(false);
+    }
+  });
+
+  it("generates a valid RFC 4122 v4-shaped UUID for the SBOM serialNumber", () => {
+    const uuid = uuidFromStamp("2026-08-16T04-25-45-545Z");
+    expect(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid)).toBe(true);
   });
 });
