@@ -1,6 +1,6 @@
 {
   "name": "@dsh-forge/plugin-ffmpeg",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "FFmpeg tools for DeepSeek Harness: probe, clip, transcode, concat, audio extract/convert, thumbnail, compress (workspace-write with overwrite guard)",
   "license": "MIT",
   "type": "module",

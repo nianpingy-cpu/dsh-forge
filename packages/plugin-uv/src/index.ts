@@ -418,9 +418,9 @@ const uvRemove: ToolDefinition = {
 export const uvPlugin = {
   metadata: {
     name: "@dsh-forge/plugin-uv",
-    version: "0.3.0",
+    version: "1.0.0",
     upstreamTool: "uv",
-    coreContractVersion: "0.3.0",
+    coreContractVersion: "1.0.0",
     capabilities: [
       "project-status",
       "dependency-tree",

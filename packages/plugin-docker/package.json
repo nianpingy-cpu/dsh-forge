@@ -1,6 +1,6 @@
 {
   "name": "@dsh-forge/plugin-docker",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Docker tools for DeepSeek Harness: status, ps, images, inspect, logs, compose status (read-only)",
   "license": "MIT",
   "type": "module",

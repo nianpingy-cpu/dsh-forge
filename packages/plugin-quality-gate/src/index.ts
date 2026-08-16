@@ -487,9 +487,9 @@ export const qualityGatePlugin: {
 } = {
   metadata: {
     name: "@dsh-forge/plugin-quality-gate",
-    version: "0.3.0",
+    version: "1.0.0",
     upstreamTool: "quality-gate (orchestration of Ruff/Biome/Semgrep/Trivy)",
-    coreContractVersion: "0.3.0",
+    coreContractVersion: "1.0.0",
     capabilities: [
       "quality-gate",
       "lint:python",

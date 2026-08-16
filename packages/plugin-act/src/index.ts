@@ -543,9 +543,9 @@ export const actPlugin: {
 } = {
   metadata: {
     name: "@dsh-forge/plugin-act",
-    version: "0.3.0",
+    version: "1.0.0",
     upstreamTool: "act",
-    coreContractVersion: "0.3.0",
+    coreContractVersion: "1.0.0",
     capabilities: [
       "list",
       "dry-run",

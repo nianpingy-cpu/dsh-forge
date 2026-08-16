@@ -1,6 +1,6 @@
 {
   "name": "@dsh-forge/plugin-semgrep",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Semgrep tools for DeepSeek Harness: scan, scan file, ruleset validate, security scan (read-only, findings to Diagnostic[])",
   "license": "MIT",
   "type": "module",

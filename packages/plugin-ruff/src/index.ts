@@ -633,9 +633,9 @@ const ruffFormat: ToolDefinition = {
 export const ruffPlugin = {
   metadata: {
     name: "@dsh-forge/plugin-ruff",
-    version: "0.3.0",
+    version: "1.0.0",
     upstreamTool: "Ruff",
-    coreContractVersion: "0.3.0",
+    coreContractVersion: "1.0.0",
     capabilities: [
       "lint:python",
       "format-check:python",

@@ -683,9 +683,9 @@ const biomeFormat: ToolDefinition = {
 export const biomePlugin = {
   metadata: {
     name: "@dsh-forge/plugin-biome",
-    version: "0.3.0",
+    version: "1.0.0",
     upstreamTool: "Biome",
-    coreContractVersion: "0.3.0",
+    coreContractVersion: "1.0.0",
     capabilities: [
       "check:js",
       "check:ts",
