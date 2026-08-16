@@ -19,6 +19,7 @@
     "format:check": "prettier --check .",
     "build": "pnpm -r run build",
     "clean": "pnpm -r exec rimraf dist coverage || true",
+    "supply-chain": "node scripts/supply-chain-check.ts",
     "review:pr": "node scripts/review-pr.ts"
   },
   "devDependencies": {
