@@ -34,10 +34,24 @@ const ALLOWED_DIST_EXT = /\.(js|js\.map|d\.ts|d\.cts|d\.mts)$/;
 const ALLOWED_LICENSES = new Set(["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC"]);
 const SKIP_DIRS = new Set(["node_modules", "dist", ".git", "coverage", ".ruff_cache"]);
 
+/** Directories that contain workspace packages (pnpm-workspace.yaml globs). */
+const WORKSPACE_GLOB_DIRS = ["packages", "presets"] as const;
+
+/** A package directory is any directory directly under a workspace glob dir
+ * that contains a package.json (e.g. packages/plugin-x, packages/core,
+ * presets/presets). This keeps every built + published package inside the
+ * supply-chain gate. */
 function packageDirs(): string[] {
-  return readdirSync(join(ROOT, "packages"))
-    .filter((d) => d.startsWith("plugin-") || d === "core")
-    .map((d) => join(ROOT, "packages", d));
+  const dirs: string[] = [];
+  for (const globDir of WORKSPACE_GLOB_DIRS) {
+    const base = join(ROOT, globDir);
+    if (!existsSync(base)) continue;
+    for (const child of readdirSync(base)) {
+      const candidate = join(base, child);
+      if (existsSync(join(candidate, "package.json"))) dirs.push(candidate);
+    }
+  }
+  return dirs;
 }
 
 /** Recursively collect all files under a directory (POSIX relative paths). */
@@ -350,26 +364,42 @@ export function runCli(args: string[] = process.argv.slice(2)): number {
   return report.ok ? 0 : 1;
 }
 
-// CLI entry: `node scripts/supply-chain-check.ts [outDir]`. Only when this
-// module is the process main entry (import.meta.main) do we run the gate. If
-// the entry path does not resolve to this script (shim/symlink/casing/dropped
-// extension) the script FAILS CLOSED (exit 2) rather than silently doing
-// nothing, so a release gate can never pass vacuously. When merely imported
-// as a module (e.g. by tests) import.meta.main is false and we do nothing.
-if (import.meta.main) {
-  const invoked = process.argv[1] ?? "";
-  if (import.meta.url === pathToFileURL(invoked).href) {
-    // Canonical direct invocation.
-    process.exit(runCli());
-  } else if (/supply-chain-check(?:\.ts)?$/i.test(invoked.replace(/\\/g, "/"))) {
-    // Direct invocation via a non-canonical path (shim/symlink/casing/dropped
-    // extension): run it but be loud, so a mismatch can never silently pass.
-    console.error("supply-chain-check: running via non-canonical entry path (exit code still enforced)");
-    process.exit(runCli());
-  } else {
-    // Main entry that does not resolve to this script — fail closed instead
-    // of exiting 0 with no checks performed.
-    console.error("supply-chain-check: entry path mismatch; failing closed (exit 2)");
-    process.exit(2);
-  }
+// CLI entry: `node scripts/supply-chain-check.ts [outDir]`.
+//
+// Direct invocations (canonical or via a shim/symlink/casing/dropped
+// extension) always run the gate — so a release gate can never pass
+// vacuously. Merely importing this module (e.g. from tests) must not exit
+// the process: in that case process.argv[1] names some other program (e.g.
+// vitest), so none of the branches below fire and we do nothing.
+const invokedEntry = process.argv[1] ?? "";
+const invokedAsThisScript = /supply-chain-check(?:\.ts)?$/i.test(
+  invokedEntry.replace(/\\/g, "/"),
+);
+const isCanonicalEntry = import.meta.url === pathToFileURL(invokedEntry).href;
+
+/** True only when the runtime proves this module is the process main entry
+ * (import.meta.main === true). On runtimes without import.meta.main this
+ * returns false, and the argv-based branches above already cover direct
+ * invocations, so we never fail a test import by accident. */
+function isMainEntryWhenUnknown(): boolean {
+  return (import.meta as { main?: unknown }).main === true;
 }
+
+if (isCanonicalEntry) {
+  // Canonical direct invocation: `node scripts/supply-chain-check.ts`.
+  process.exit(runCli());
+} else if (invokedAsThisScript) {
+  // Direct invocation via a non-canonical path (shim/symlink/casing/dropped
+  // extension, or a type-stripping runtime without import.meta.main): run it
+  // but be loud, so a mismatch can never silently pass.
+  console.error("supply-chain-check: running via non-canonical entry path (exit code still enforced)");
+  process.exit(runCli());
+} else if (invokedEntry !== "" && isMainEntryWhenUnknown()) {
+  // Main entry that does not resolve to this script name (e.g. argv[0]
+  // symlink with a renamed target) — fail closed instead of exiting 0
+  // unchecked.
+  console.error("supply-chain-check: entry path mismatch; failing closed (exit 2)");
+  process.exit(2);
+}
+// Otherwise we are an imported module (process.argv[1] is some other program,
+// e.g. vitest) — do nothing.
