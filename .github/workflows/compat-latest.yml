@@ -1,0 +1,54 @@
+name: compat-latest
+
+# Compatibility matrix — Latest lane (scheduled, non-blocking). Fetches the
+# current upstream master commit and compares it against the pinned snapshot.
+# Drift generates a compatibility report artifact (compatibility/reports/)
+# without blocking released plugins.
+on:
+  schedule:
+    - cron: "0 2 * * *" # daily 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    name: compat matrix (Latest lane, non-blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js (pinned, type-stripping capable)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fetch latest upstream master commit
+        id: latest
+        run: echo "sha=$(gh api repos/deepseek-ai/deepseek-harness/commits/master --jq .sha)" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Generate latest snapshot + compatibility report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Fetch REAL machine-observable upstream values (commit SHA,
+          # engines.node, packageManager). Non-observable descriptive fields
+          # are omitted so they are reported as unobserved — never mirrored
+          # from the pinned manifest.
+          node scripts/fetch-latest-snapshot.ts deepseek-ai/deepseek-harness compatibility/latest-snapshot.json
+          # Drift is non-blocking: the CLI exits 0 for drift (only an invalid
+          # pinned manifest blocks). Always generate + upload the report.
+          node scripts/compat-matrix.ts compatibility/deepseek-harness.json compatibility/latest-snapshot.json
+
+      - name: Upload compatibility report
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-latest-report
+          path: compatibility/reports/
+          if-no-files-found: error

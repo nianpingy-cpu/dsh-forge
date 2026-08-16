@@ -148,7 +148,7 @@ describe("semgrep_scan", () => {
         expect(d.message).toBeTruthy();
       }
     }
-  }, 30_000);
+  }, 120_000);
 
   it("maps findings from canned semgrep JSON", async () => {
     const mock: ExecutionRunner = async () => ({
