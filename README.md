@@ -10,6 +10,72 @@ DSH Forge 提供的是开发者工具与 DeepSeek Harness 之间的一层适配�
 
 ---
 
+## Quick Start（快速开始）
+
+3 分钟跑通第一个工具。
+
+### 1. 环境要求
+
+- Node.js >= 22.19（`node --version` 查看）
+- pnpm（`pnpm --version` 查看；没有就先 `npm install -g pnpm`）
+
+### 2. 安装
+
+```bash
+pnpm add @dsh-forge/core @dsh-forge/presets
+```
+
+想用某个单独插件，就再加对应包，例如 `pnpm add @dsh-forge/plugin-vision`。
+
+### 3. 加载 preset，看看有哪些工具
+
+preset 是一组插件的组合。下面加载 `python` preset（Ruff + uv），打印它注册的所有工具：
+
+```ts
+import { resolvePresetOrThrow } from "@dsh-forge/presets";
+
+const preset = resolvePresetOrThrow("python"); // Ruff + uv
+
+for (const plugin of preset.plugins) {
+  console.log(plugin.metadata.name);
+  for (const tool of plugin.tools) {
+    console.log(`  ${tool.name} [${tool.mutationClass}]`);
+  }
+}
+```
+
+### 4. 真正调用一个工具
+
+所有工具都是 `async execute(args, ctx)`，返回结构化结果（`ok` / `summary` / `diagnostics` / `error`）。`ctx` 提供工作区边界与权限控制，真实环境中由 DeepSeek Harness 注入。
+
+下面用 `@dsh-forge/plugin-vision` 分析一个 CSV 文件——纯 Node 实现，不需要任何外部二进制：
+
+```ts
+import { runProcess } from "@dsh-forge/core";
+import { visionPlugin } from "@dsh-forge/plugin-vision";
+
+const ctx = {
+  workspaceRoot: process.cwd(),   // 工具只能读写这里
+  run: runProcess,                // 用类型化 argv 启动外部工具（绝无 shell）
+  permission: { approved: true }, // 写操作授权
+};
+
+const result = await visionPlugin.tools
+  .find((t) => t.name === "data_analyze")!
+  .execute({ data: "sales.csv" }, ctx);
+
+console.log(result.summary); // e.g. "analyzed sales.csv: csv, 6 row(s) x 4 column(s)"
+console.log(result.diagnostics); // 结构化诊断
+```
+
+### 5. 还想看更多？
+
+- 完整场景示例在 `examples/` 目录（python-quality、web-quality、security-scan、local-ci、load-test、media、vision）。
+- 每个插件的安装与用法见 `packages/plugin-*/README.md`。
+- 插件列表见下方「Plugin Ecosystem」，组合方式见「Presets」。
+
+---
+
 ## Current Status
 
 **Current release: `v1.0.0`**
